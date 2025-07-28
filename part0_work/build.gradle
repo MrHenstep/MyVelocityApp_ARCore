@@ -45,4 +45,14 @@ dependencies {
 
     implementation 'com.android.support:appcompat-v7:28.0.0'
     implementation 'com.android.support:design:28.0.0'
+
+    // ... other dependencies
+//    implementation 'org.tensorflow:tensorflow-lite:2.9.0' // Or the latest version
+//    // You might also need the TFLite GPU delegate if you plan to use GPU acceleration
+//     implementation 'org.tensorflow:tensorflow-lite-gpu:2.9.0'
+    // And potentially the TFLite Support Library for easier input/output processing
+     implementation 'org.tensorflow:tensorflow-lite-support:0.4.0'
+
+    implementation 'org.tensorflow:tensorflow-lite:2.13.0'            // Or your current version
+    implementation 'org.tensorflow:tensorflow-lite-gpu:2.13.0'
 }

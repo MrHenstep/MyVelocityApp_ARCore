@@ -53,8 +53,8 @@ vec3 PerceptColormap(in float x) {
 
 void main() {
    // Colors the pointcloud by height.
-   float kMinHeightMeters = -2.0f;
-   float kMaxHeightMeters = 2.0f;
+   float kMinHeightMeters = -2.0;
+   float kMaxHeightMeters = 2.0;
    float normalizedHeight = clamp((a_Position.y - kMinHeightMeters) / (kMaxHeightMeters - kMinHeightMeters), 0.0, 1.0);
    v_Color = vec4(PerceptColormap(normalizedHeight), 1.0);
    gl_Position = u_ModelViewProjection * vec4(a_Position.xyz, 1.0);
