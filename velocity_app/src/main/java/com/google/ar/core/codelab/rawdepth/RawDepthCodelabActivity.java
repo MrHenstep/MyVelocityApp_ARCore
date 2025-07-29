@@ -66,6 +66,7 @@ import com.google.ar.core.codelab.common.helpers.TrackingStateHelper;
 import com.google.ar.core.codelab.common.rendering.BackgroundRenderer;
 import com.google.ar.core.codelab.common.rendering.DepthRenderer;
 import com.google.ar.core.codelab.common.rendering.DepthMapRenderer;
+import com.google.ar.core.codelab.common.rendering.OverlayRenderer;
 
 
 import com.google.ar.core.exceptions.CameraNotAvailableException;
@@ -116,9 +117,11 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
   private DisplayRotationHelper displayRotationHelper;
 
   private final BackgroundRenderer backgroundRenderer = new BackgroundRenderer();
-  private final DepthRenderer depthRenderer = new DepthRenderer();
+//  private final DepthRenderer depthRenderer = new DepthRenderer();
 
-  private final DepthMapRenderer depthMapRenderer = new DepthMapRenderer();
+//  private final DepthMapRenderer depthMapRenderer = new DepthMapRenderer();
+  private final OverlayRenderer overlayRenderer = new OverlayRenderer();
+  private Bitmap latestRenderBitmap = null;
 
   // Inside your RawDepthCodelabActivity class:
   private Interpreter tflite_interpreter;
@@ -307,9 +310,13 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
       // Create the texture and pass it to ARCore session to be filled during update().
       backgroundRenderer.createOnGlThread(/*context=*/ this);
 
-      depthRenderer.createOnGlThread(/*context=*/ this);
+//      depthRenderer.createOnGlThread(/*context=*/ this);
 
 //      depthMapRenderer.init();
+      // Provide a dummy placeholder bitmap on first load
+      Bitmap placeholder = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888);
+      overlayRenderer.createOnGlThread(this, placeholder);
+
 
     } catch (IOException e) {
       Log.e(TAG, "Failed to read an asset file", e);
@@ -324,7 +331,7 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     viewWidth = width;
     viewHeight = height;
 
-    depthMapRenderer.init();  // NEW: Pass dimensions here
+//    depthMapRenderer.init();  // NEW: Pass dimensions here
 
   }
 
@@ -351,7 +358,12 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
       backgroundRenderer.draw(frame);
 
 //      depthMapRenderer.updateGeometry(frame); // updates texture coords
-      depthMapRenderer.draw();               // overlays depth
+//      depthMapRenderer.draw();               // overlays depth
+
+      if (latestRenderBitmap != null) {
+        overlayRenderer.updateTexture(latestRenderBitmap);
+      }
+      overlayRenderer.draw(frame);
 
       runDepthEstimation(frame);
 
@@ -462,8 +474,8 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
       outputBitmap = Bitmap.createScaledBitmap(outputBitmap, 480, 640, true);
       displayBitmapWithAspectRatio(outputBitmap);
 
-//      outputBitmap = rotateBitmap(outputBitmap, -rotationDegrees);
-//      displayBitmapWithAspectRatio(outputBitmap);
+      outputBitmap = rotateBitmap(outputBitmap, -rotationDegrees);
+      displayBitmapWithAspectRatio(outputBitmap);
 
       // flip it horizontally to match what the renderer wants
 //      outputBitmap = flipBitmapHorizontally(outputBitmap);
@@ -472,10 +484,12 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 
 
 
-//      Bitmap renderBitmap = flipBitmapVertically(outputBitmap);
-      Bitmap renderBitmap = flipBitmapHorizontally(outputBitmap);
-//      Bitmap renderBitmap = outputBitmap;
-      depthMapRenderer.updateBitmap(renderBitmap);
+//      outputBitmap = flipBitmapVertically(outputBitmap);
+//      outputBitmap = flipBitmapHorizontally(outputBitmap);
+//      depthMapRenderer.updateBitmap(outputBitmap);
+
+//      latestRenderBitmap = outputBitmap;
+      latestRenderBitmap = imageBitmap;
 
       clearBitmapView();
 
