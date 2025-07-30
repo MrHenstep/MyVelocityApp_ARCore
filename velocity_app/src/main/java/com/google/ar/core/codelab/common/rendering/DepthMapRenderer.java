@@ -10,38 +10,29 @@ import java.nio.FloatBuffer;
 
 public class DepthMapRenderer {
 
-    private static final int FLOAT_SIZE = 4;
-    private static final int COORDS_PER_VERTEX = 2;
-    private static final int TEXCOORDS_PER_VERTEX = 2;
-
-    // Fullscreen quad in NDC
-    private static final float[] QUAD_COORDS = {
-            -1.0f, -1.0f,
-            1.0f, -1.0f,
-            -1.0f,  1.0f,
-            1.0f,  1.0f,
-    };
-
-    // Manually flipped texture coordinates (horizontally)
-    private static final float[] TEX_COORDS = {
-            1.0f, 1.0f,  // top-left
-            0.0f, 1.0f,  // top-right
-            1.0f, 0.0f,  // bottom-left
-            0.0f, 0.0f   // bottom-right
-    };
-
-    private FloatBuffer vertexBuffer;
-    private FloatBuffer texCoordBuffer;
-
-    private int program;
     private int textureId;
+    private int program;
     private int positionHandle;
     private int texCoordHandle;
     private int textureHandle;
 
-    private boolean initialized = false;
+    private FloatBuffer vertexBuffer;
+    private FloatBuffer texCoordBuffer;
 
-    // Shaders
+    private static final float[] QUAD_COORDS = {
+            -1.0f, -1.0f,   // Bottom left
+            1.0f, -1.0f,   // Bottom right
+            -1.0f,  1.0f,   // Top left
+            1.0f,  1.0f    // Top right
+    };
+
+    private static final float[] QUAD_TEX_COORDS = {
+            0.0f, 1.0f,
+            1.0f, 1.0f,
+            0.0f, 0.0f,
+            1.0f, 0.0f
+    };
+
     private static final String VERTEX_SHADER =
             "attribute vec4 a_Position;" +
                     "attribute vec2 a_TexCoord;" +
@@ -56,24 +47,47 @@ public class DepthMapRenderer {
                     "uniform sampler2D u_Texture;" +
                     "varying vec2 v_TexCoord;" +
                     "void main() {" +
-                    "  vec4 color = texture2D(u_Texture, v_TexCoord);" +
-                    "  gl_FragColor = vec4(color.rgb, 0.5);" +  // 60% opacity
+                    "  vec4 depth = texture2D(u_Texture, v_TexCoord);" +
+                    "  gl_FragColor = vec4(depth.rgb, 0.5);" +  // 0.5 = semi-transparent
                     "}";
 
-    public void init() {
-        // Vertex buffer
-        vertexBuffer = ByteBuffer.allocateDirect(QUAD_COORDS.length * FLOAT_SIZE)
+    public void init(int viewWidth, int viewHeight) {
+        float aspect = (float) viewHeight / viewWidth; // invert to stretch horizontally
+
+        float[] quadCoords = {
+                -1.0f, -1.0f,
+                1.0f, -1.0f,
+                -1.0f,  1.0f,
+                1.0f,  1.0f
+        };
+
+        vertexBuffer = ByteBuffer.allocateDirect(quadCoords.length * 4)
                 .order(ByteOrder.nativeOrder())
                 .asFloatBuffer();
-        vertexBuffer.put(QUAD_COORDS).position(0);
+        vertexBuffer.put(quadCoords).position(0);
 
-        // Texture coordinate buffer (flipped)
-        texCoordBuffer = ByteBuffer.allocateDirect(TEX_COORDS.length * FLOAT_SIZE)
+//        texCoordBuffer = ByteBuffer.allocateDirect(QUAD_TEX_COORDS.length * 4)
+//                .order(ByteOrder.nativeOrder())
+//                .asFloatBuffer();
+//        texCoordBuffer.put(QUAD_TEX_COORDS).position(0);
+
+        float t0 = 0.21875f;  // bottom edge of valid image area
+        float t1 = 0.78125f;  // top edge of valid image area
+
+        float[] texCoords = {
+                0.0f, t1,   // Bottom left
+                1.0f, t1,   // Bottom right
+                0.0f, t0,   // Top left
+                1.0f, t0    // Top right
+        };
+
+        texCoordBuffer = ByteBuffer.allocateDirect(texCoords.length * 4)
                 .order(ByteOrder.nativeOrder())
                 .asFloatBuffer();
-        texCoordBuffer.put(TEX_COORDS).position(0);
+        texCoordBuffer.put(texCoords).position(0);
 
-        // Compile and link program
+
+        // Compile shaders and link program
         int vertexShader = loadShader(GLES20.GL_VERTEX_SHADER, VERTEX_SHADER);
         int fragmentShader = loadShader(GLES20.GL_FRAGMENT_SHADER, FRAGMENT_SHADER);
         program = GLES20.glCreateProgram();
@@ -85,7 +99,7 @@ public class DepthMapRenderer {
         texCoordHandle = GLES20.glGetAttribLocation(program, "a_TexCoord");
         textureHandle = GLES20.glGetUniformLocation(program, "u_Texture");
 
-        // Create 2D texture
+        // Create texture
         int[] textures = new int[1];
         GLES20.glGenTextures(1, textures, 0);
         textureId = textures[0];
@@ -96,12 +110,7 @@ public class DepthMapRenderer {
 
     public void updateBitmap(Bitmap bitmap) {
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId);
-        if (!initialized) {
-            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0);
-            initialized = true;
-        } else {
-            GLUtils.texSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, bitmap);
-        }
+        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0);
     }
 
     public void draw() {
@@ -110,14 +119,13 @@ public class DepthMapRenderer {
         GLES20.glEnableVertexAttribArray(positionHandle);
         GLES20.glEnableVertexAttribArray(texCoordHandle);
 
-        vertexBuffer.position(0);
-        texCoordBuffer.position(0);
+        GLES20.glVertexAttribPointer(positionHandle, 2, GLES20.GL_FLOAT, false, 0, vertexBuffer);
+        GLES20.glVertexAttribPointer(texCoordHandle, 2, GLES20.GL_FLOAT, false, 0, texCoordBuffer);
 
-        GLES20.glVertexAttribPointer(positionHandle, COORDS_PER_VERTEX, GLES20.GL_FLOAT, false, 0, vertexBuffer);
-        GLES20.glVertexAttribPointer(texCoordHandle, TEXCOORDS_PER_VERTEX, GLES20.GL_FLOAT, false, 0, texCoordBuffer);
-
-        // Enable alpha blending for overlay
+        // 🔧 Disable depth testing so overlay doesn’t occlude
         GLES20.glDisable(GLES20.GL_DEPTH_TEST);
+
+        // 🔧 Enable alpha blending
         GLES20.glEnable(GLES20.GL_BLEND);
         GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
 
@@ -130,19 +138,18 @@ public class DepthMapRenderer {
         // Cleanup
         GLES20.glDisableVertexAttribArray(positionHandle);
         GLES20.glDisableVertexAttribArray(texCoordHandle);
+
+        // 🔧 Restore state for later depth drawing
         GLES20.glDisable(GLES20.GL_BLEND);
-        GLES20.glEnable(GLES20.GL_DEPTH_TEST);
+        GLES20.glEnable(GLES20.GL_DEPTH_TEST);  // <- ESSENTIAL
     }
 
-    private int loadShader(int type, String code) {
+
+
+    private int loadShader(int type, String shaderCode) {
         int shader = GLES20.glCreateShader(type);
-        GLES20.glShaderSource(shader, code);
+        GLES20.glShaderSource(shader, shaderCode);
         GLES20.glCompileShader(shader);
         return shader;
-    }
-
-    // No geometry transform — this is manual
-    public void updateGeometry() {
-        // no-op
     }
 }

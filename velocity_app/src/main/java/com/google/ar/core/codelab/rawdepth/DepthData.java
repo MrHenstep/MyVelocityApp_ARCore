@@ -22,7 +22,9 @@ public class DepthData {
     public static final int FLOATS_PER_POINT = 4; // X,Y,Z,confidence.
 
 
-    public static FloatBuffer create(Frame frame, Anchor cameraPoseAnchor) {
+//    public static FloatBuffer create(Frame frame, Anchor cameraPoseAnchor) {
+    public static FloatBuffer create(Frame frame, float[] modelMatrix) {
+
         try {
             Image depthImage = frame.acquireRawDepthImage16Bits();
             Image confidenceImage = frame.acquireRawDepthConfidenceImage();
@@ -33,8 +35,9 @@ public class DepthData {
             // https://developers.google.com/ar/develop/java/depth/overview#understand-depth-values.
 
             final CameraIntrinsics intrinsics = frame.getCamera().getTextureIntrinsics();
-            float[] modelMatrix = new float[16];
-            cameraPoseAnchor.getPose().toMatrix(modelMatrix, 0);
+
+//            float[] modelMatrix = new float[16];
+//            cameraPoseAnchor.getPose().toMatrix(modelMatrix, 0);
 
             final FloatBuffer points = convertRawDepthImagesTo3dPointBuffer(
                     depthImage, confidenceImage, intrinsics, modelMatrix);

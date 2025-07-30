@@ -28,7 +28,7 @@ public class OverlayRenderer {
     private int alphaUniform;
     private int textureId = -1;
 
-    private float alpha = 0.75f;
+    private float alpha = 0.5f;
 
     // Fullscreen quad in NDC
     private static final float[] QUAD_COORDS_DATA = {
@@ -71,7 +71,10 @@ public class OverlayRenderer {
         GLUtils.texSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, bitmap);
     }
 
-    public void draw(Frame frame) {
+    public float[] draw(Frame frame) {
+
+        float[] uvBounds = null;
+
         if (frame.hasDisplayGeometryChanged()) {
             frame.transformCoordinates2d(
                     Coordinates2d.OPENGL_NORMALIZED_DEVICE_COORDINATES,
@@ -79,27 +82,78 @@ public class OverlayRenderer {
                     Coordinates2d.TEXTURE_NORMALIZED,
                     quadTexCoords
             );
-            float[] tex = new float[8];
-            quadTexCoords.position(0);
-            quadTexCoords.get(tex);
-            quadTexCoords.position(0);  // Reset position if reused later
-
-            Log.d("Crop", String.format("Overlay: BL(%.3f, %.3f), BR(%.3f, %.3f), TL(%.3f, %.3f), TR(%.3f, %.3f)",
-                    tex[0], tex[1],  // bottom-left
-                    tex[2], tex[3],  // bottom-right
-                    tex[4], tex[5],  // top-left
-                    tex[6], tex[7]   // top-right
-            ));
-
         }
 
         draw();
+
+        return uvBounds;
     }
+
+    public float[] getUvBounds() {
+
+        float[] uvBounds;
+
+        float[] tex = new float[8];
+        quadTexCoords.position(0);
+        quadTexCoords.get(tex);
+        quadTexCoords.position(0);  // Reset position if reused later
+
+        // Compute min/max U and V
+        float uMin = Float.MAX_VALUE, uMax = Float.MIN_VALUE;
+        float vMin = Float.MAX_VALUE, vMax = Float.MIN_VALUE;
+
+        for (int i = 0; i < 4; i++) {
+            float u = tex[2 * i];
+            float v = tex[2 * i + 1];
+            uMin = Math.min(uMin, u);
+            uMax = Math.max(uMax, u);
+            vMin = Math.min(vMin, v);
+            vMax = Math.max(vMax, v);
+        }
+
+        uvBounds = new float[] { uMin, vMin, uMax, vMax };
+
+        return uvBounds;
+    }
+
+
+//    private void draw() {
+//        quadCoords.position(0);
+//        quadTexCoords.position(0);
+//
+//        GLES20.glEnable(GLES20.GL_BLEND);
+//        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+//
+//        GLES20.glUseProgram(quadProgram);
+//        GLES20.glUniform1f(alphaUniform, alpha);
+//
+//        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+//        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId);
+//
+//        GLES20.glVertexAttribPointer(quadPositionParam, COORDS_PER_VERTEX, GLES20.GL_FLOAT, false, 0, quadCoords);
+//        GLES20.glVertexAttribPointer(quadTexCoordParam, TEXCOORDS_PER_VERTEX, GLES20.GL_FLOAT, false, 0, quadTexCoords);
+//
+//        GLES20.glEnableVertexAttribArray(quadPositionParam);
+//        GLES20.glEnableVertexAttribArray(quadTexCoordParam);
+//
+//        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+//
+//        GLES20.glDisableVertexAttribArray(quadPositionParam);
+//        GLES20.glDisableVertexAttribArray(quadTexCoordParam);
+//        GLES20.glDisable(GLES20.GL_BLEND);
+//    }
 
     private void draw() {
         quadCoords.position(0);
         quadTexCoords.position(0);
 
+        // Save current OpenGL program and texture
+        int[] previousProgram = new int[1];
+        int[] previousTexture = new int[1];
+        GLES20.glGetIntegerv(GLES20.GL_CURRENT_PROGRAM, previousProgram, 0);
+        GLES20.glGetIntegerv(GLES20.GL_TEXTURE_BINDING_2D, previousTexture, 0);
+
+        // Set up for overlay rendering
         GLES20.glEnable(GLES20.GL_BLEND);
         GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
 
@@ -109,17 +163,22 @@ public class OverlayRenderer {
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId);
 
-        GLES20.glVertexAttribPointer(quadPositionParam, COORDS_PER_VERTEX, GLES20.GL_FLOAT, false, 0, quadCoords);
-        GLES20.glVertexAttribPointer(quadTexCoordParam, TEXCOORDS_PER_VERTEX, GLES20.GL_FLOAT, false, 0, quadTexCoords);
-
         GLES20.glEnableVertexAttribArray(quadPositionParam);
+        GLES20.glVertexAttribPointer(quadPositionParam, COORDS_PER_VERTEX, GLES20.GL_FLOAT, false, 0, quadCoords);
+
         GLES20.glEnableVertexAttribArray(quadTexCoordParam);
+        GLES20.glVertexAttribPointer(quadTexCoordParam, TEXCOORDS_PER_VERTEX, GLES20.GL_FLOAT, false, 0, quadTexCoords);
 
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
 
+        // Clean up
         GLES20.glDisableVertexAttribArray(quadPositionParam);
         GLES20.glDisableVertexAttribArray(quadTexCoordParam);
         GLES20.glDisable(GLES20.GL_BLEND);
+
+        // Restore previous OpenGL state
+        GLES20.glUseProgram(previousProgram[0]);
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, previousTexture[0]);
     }
 
     private int loadTextureFromBitmap(Bitmap bitmap) {

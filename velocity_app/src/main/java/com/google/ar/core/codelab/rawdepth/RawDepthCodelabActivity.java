@@ -19,11 +19,10 @@ package com.google.ar.core.codelab.rawdepth;
 import android.content.res.AssetFileDescriptor;
 
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+
 import android.graphics.Matrix;
-import android.graphics.Paint;
 
 //import android.graphics.Bitmap;
 import android.media.Image;
@@ -56,28 +55,24 @@ import com.google.ar.core.Camera;
 import com.google.ar.core.Config;
 import com.google.ar.core.Frame;
 import com.google.ar.core.Session;
-import com.google.ar.core.TrackingState;
 import com.google.ar.core.codelab.common.helpers.CameraPermissionHelper;
 import com.google.ar.core.codelab.common.helpers.DisplayRotationHelper;
 import com.google.ar.core.codelab.common.helpers.FullScreenHelper;
 import com.google.ar.core.codelab.common.helpers.SnackbarHelper;
-import com.google.ar.core.codelab.common.helpers.TrackingStateHelper;
 
 import com.google.ar.core.codelab.common.rendering.BackgroundRenderer;
-import com.google.ar.core.codelab.common.rendering.DepthRenderer;
 import com.google.ar.core.codelab.common.rendering.DepthMapRenderer;
+import com.google.ar.core.codelab.common.rendering.DepthRenderer;
 import com.google.ar.core.codelab.common.rendering.OverlayRenderer;
 
 
 import com.google.ar.core.exceptions.CameraNotAvailableException;
-import com.google.ar.core.exceptions.NotYetAvailableException;
 import com.google.ar.core.exceptions.UnavailableApkTooOldException;
 import com.google.ar.core.exceptions.UnavailableArcoreNotInstalledException;
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException;
 import com.google.ar.core.exceptions.UnavailableSdkTooOldException;
 import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException;
 import java.io.IOException;
-import java.nio.FloatBuffer;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
@@ -92,19 +87,13 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 
-
-// If you need to convert YUV to RGB, you might need:
-// import android.renderscript.Allocation;
-// import android.renderscript.Element;
-// import android.renderscript.RenderScript;
-// import android.renderscript.ScriptIntrinsicYuvToRGB;
-
-
 /**
  * This is a simple example that shows how to create an augmented reality (AR) application using the
  * ARCore Raw Depth API. The application will show 3D point-cloud data of the environment.
  */
 public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurfaceView.Renderer {
+
+  // <editor-fold desc="Member Variables">
   private static final String TAG = RawDepthCodelabActivity.class.getSimpleName();
 
   // Rendering. The Renderers are created here, and initialized when the GL surface is created.
@@ -117,9 +106,10 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
   private DisplayRotationHelper displayRotationHelper;
 
   private final BackgroundRenderer backgroundRenderer = new BackgroundRenderer();
-//  private final DepthRenderer depthRenderer = new DepthRenderer();
+  private final DepthRenderer depthRenderer = new DepthRenderer();
 
-//  private final DepthMapRenderer depthMapRenderer = new DepthMapRenderer();
+  private final DepthMapRenderer depthMapRenderer = new DepthMapRenderer();
+
   private final OverlayRenderer overlayRenderer = new OverlayRenderer();
   private Bitmap latestRenderBitmap = null;
 
@@ -130,14 +120,20 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
   private int viewWidth;
   private int viewHeight;
 
+  private float[] uvBounds = null;
+
 
   // Offscreen framebuffer and texture for MiDaS letterboxed input
   private int offscreenFramebuffer = -1;
   private int offscreenTexture = -1;
+  private int offscreenWidth = -1;
+  private int offscreenHeight = -1;
 
   private ImageView debugDepthInputView;
   private ImageView bitmapView;
+// </editor-fold>
 
+  // <editor-fold desc="Activity Lifecycle">
   @Override
   protected void onCreate(Bundle savedInstanceState) {
 
@@ -310,13 +306,17 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
       // Create the texture and pass it to ARCore session to be filled during update().
       backgroundRenderer.createOnGlThread(/*context=*/ this);
 
-//      depthRenderer.createOnGlThread(/*context=*/ this);
+      depthRenderer.createOnGlThread(/*context=*/ this);
 
-//      depthMapRenderer.init();
+
+
       // Provide a dummy placeholder bitmap on first load
-      Bitmap placeholder = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888);
-      overlayRenderer.createOnGlThread(this, placeholder);
+      Bitmap placeholderBitmap = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888);
+      placeholderBitmap.eraseColor(Color.TRANSPARENT);  // Fill with transparent black (0 alpha)
 
+      overlayRenderer.createOnGlThread(this, placeholderBitmap);
+
+      latestRenderBitmap = placeholderBitmap;
 
     } catch (IOException e) {
       Log.e(TAG, "Failed to read an asset file", e);
@@ -331,7 +331,7 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     viewWidth = width;
     viewHeight = height;
 
-//    depthMapRenderer.init();  // NEW: Pass dimensions here
+    depthMapRenderer.init(width, height);  // NEW: Pass dimensions here
 
   }
 
@@ -353,41 +353,40 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
       session.setCameraTextureName(backgroundRenderer.getTextureId());
 
       Frame frame = session.update();
-      Camera camera = frame.getCamera();
 
       backgroundRenderer.draw(frame);
 
-//      depthMapRenderer.updateGeometry(frame); // updates texture coords
-//      depthMapRenderer.draw();               // overlays depth
+      // Retrieve the depth data for this frame.
+      Camera camera = frame.getCamera();
 
-      if (latestRenderBitmap != null) {
-        overlayRenderer.updateTexture(latestRenderBitmap);
-      }
-      overlayRenderer.draw(frame);
+//      float[] modelMatrix = new float[16];
+//      frame.getCamera().getPose().toMatrix(modelMatrix, 0);
+//      FloatBuffer points = DepthData.create(frame, modelMatrix);
+//
+//      if (points != null) {
+//        if (messageSnackbarHelper.isShowing() && points != null) {
+//          messageSnackbarHelper.hide(this);
+//        }
+//
+//        // Visualize depth points.
+//        depthRenderer.update(points);
+//        depthRenderer.draw(camera);
+//
+//        // If not tracking, show tracking failure reason instead.
+//        if (camera.getTrackingState() == TrackingState.PAUSED) {
+//          messageSnackbarHelper.showMessage(
+//                  this, TrackingStateHelper.getTrackingFailureReasonString(camera));
+//          return;
+//        }
+//      }
+
+//      if (latestRenderBitmap != null) {
+//        overlayRenderer.updateTexture(latestRenderBitmap);
+//        overlayRenderer.draw(frame);
+//      }
+//      uvBounds = overlayRenderer.getUvBounds();
 
       runDepthEstimation(frame);
-
-      // Retrieve the depth data for this frame.
-//      FloatBuffer points = DepthData.create(frame, session.createAnchor(camera.getPose()));
-//      if (points == null) {
-//        return;
-//      }
-//
-//      if (messageSnackbarHelper.isShowing() && points != null) {
-//        messageSnackbarHelper.hide(this);
-//      }
-
-      // Visualize depth points.
-//      depthRenderer.update(points);
-//      depthRenderer.draw(camera);
-
-      // If not tracking, show tracking failure reason instead.
-//      if (camera.getTrackingState() == TrackingState.PAUSED) {
-//        messageSnackbarHelper.showMessage(
-//                this, TrackingStateHelper.getTrackingFailureReasonString(camera));
-//        return;
-//      }
-
 
     } catch (Throwable t) {
       // Avoid crashing the application due to unhandled exceptions.
@@ -395,6 +394,8 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     }
 
   }
+
+  // </editor-fold>
 
   // Helper method to load the model file
   private MappedByteBuffer loadModelFile(AppCompatActivity activity) throws IOException {
@@ -413,36 +414,56 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
       int rotationDegrees = getCameraImageRotationDegrees(this, displayRotation);
 
       // using render to write to file buffer
-//      Bitmap inputBitmap = renderCameraToLetterboxedSquareFBO(frame);
-//      inputBitmap = flipBitmapVertically(inputBitmap);
-//
-//      displayBitmapWithAspectRatio(inputBitmap);
+      Bitmap imageBitmap = getBitmapFromFrameLetterBox(frame);
+//      Bitmap imageBitmap = getBitmapFromFrame(frame);
+
+      displayBitmapWithAspectRatio(imageBitmap);
+      runOnUiThread(() -> {});  // Nudge UI thread to resume processing
+
+
+      if (false) {
+        imageBitmap = flipBitmapVertically(imageBitmap);
+        displayBitmapWithAspectRatio(imageBitmap);
+        runOnUiThread(() -> {
+        });  // Nudge UI thread to resume processing
+
+        imageBitmap = padBitmapToSquare(imageBitmap);
+        displayBitmapWithAspectRatio(imageBitmap);
+        runOnUiThread(() -> {
+        });  // Nudge UI thread to resume processing
+
+        imageBitmap = Bitmap.createScaledBitmap(imageBitmap, 256, 256, true);
+        displayBitmapWithAspectRatio(imageBitmap);
+        runOnUiThread(() -> {
+        });  // Nudge UI thread to resume processing
+      }
 
       // get camera image directly
-      Image image = frame.acquireCameraImage();
-      Bitmap imageBitmap = imageToBitmap(image);
-      displayBitmapWithAspectRatio(imageBitmap);
-      image.close();
+//      Image image = frame.acquireCameraImage();
+//      Bitmap imageBitmap = imageToBitmap(image);
+//      displayBitmapWithAspectRatio(imageBitmap);
+//      image.close();
 
-      // centre crop
-//      bitmap = cropCenterSquare(bitmap);
-
-      // now rotate the bitmap
-      Bitmap rotatedImageBitmap = rotateBitmap(imageBitmap, rotationDegrees);
-      displayBitmapWithAspectRatio(rotatedImageBitmap);
-
-      // scale to 256x256
-      Bitmap scaledRotatedImageBitmap = Bitmap.createScaledBitmap(rotatedImageBitmap, 256, 256, true);
-      displayBitmapWithAspectRatio(scaledRotatedImageBitmap);
-
-       // use this to display the input bitmap as a transparent render for checking
-//      inputBitmap = flipBitmapVertically(inputBitmap);
-//      depthMapRenderer.updateBitmap(inputBitmap);
-
-      Bitmap inputBitmap = scaledRotatedImageBitmap;
       Bitmap outputBitmap;
 
-      if (true) {
+      if (false) {
+
+        // centre crop
+  //      bitmap = cropCenterSquare(bitmap);
+
+        // now rotate the bitmap
+//        Bitmap rotatedImageBitmap = rotateBitmap(imageBitmap, rotationDegrees);
+//        displayBitmapWithAspectRatio(rotatedImageBitmap);
+//
+//        // scale to 256x256
+//        Bitmap scaledRotatedImageBitmap = Bitmap.createScaledBitmap(rotatedImageBitmap, 256, 256, true);
+//        displayBitmapWithAspectRatio(scaledRotatedImageBitmap);
+
+         // use this to display the input bitmap as a transparent render for checking
+  //      inputBitmap = flipBitmapVertically(inputBitmap);
+  //      depthMapRenderer.updateBitmap(inputBitmap);
+
+        Bitmap inputBitmap = imageBitmap;
         // run through Midas
         // prepare the input buffer
         ByteBuffer inputBuffer = ByteBuffer.allocateDirect(1 * 256 * 256 * 3 * 4); // 1 image, 256x256, 3 channels, 4 bytes per float
@@ -464,32 +485,42 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 
         // create coloured bitmap from Midas output buffer
         outputBitmap = createColorMappedBitmap(outputBuffer, 256, 256);
+
+        displayBitmapWithAspectRatio(outputBitmap);
+
+        outputBitmap = Bitmap.createScaledBitmap(outputBitmap, 480, 640, true);
+        displayBitmapWithAspectRatio(outputBitmap);
+
+        outputBitmap = rotateBitmap(outputBitmap, -rotationDegrees);
+        displayBitmapWithAspectRatio(outputBitmap);
+
+        // flip it horizontally to match what the renderer wants
+  //      outputBitmap = flipBitmapHorizontally(outputBitmap);
+  //      displayBitmapWithAspectRatio(outputBitmap);
+
+  //      outputBitmap = flipBitmapVertically(outputBitmap);
+  //      outputBitmap = flipBitmapHorizontally(outputBitmap);
+  //      depthMapRenderer.updateBitmap(outputBitmap);
       }
       else {
-        outputBitmap = scaledRotatedImageBitmap;
+        outputBitmap = imageBitmap;
       }
 
-      displayBitmapWithAspectRatio(outputBitmap);
 
-      outputBitmap = Bitmap.createScaledBitmap(outputBitmap, 480, 640, true);
-      displayBitmapWithAspectRatio(outputBitmap);
-
-      outputBitmap = rotateBitmap(outputBitmap, -rotationDegrees);
-      displayBitmapWithAspectRatio(outputBitmap);
-
-      // flip it horizontally to match what the renderer wants
-//      outputBitmap = flipBitmapHorizontally(outputBitmap);
-//      displayBitmapWithAspectRatio(outputBitmap);
-
-
-
-
-//      outputBitmap = flipBitmapVertically(outputBitmap);
-//      outputBitmap = flipBitmapHorizontally(outputBitmap);
-//      depthMapRenderer.updateBitmap(outputBitmap);
+//      if (uvBounds != null) {
+//        outputBitmap = cropBitmapByUV(outputBitmap, uvBounds[0], uvBounds[1], uvBounds[2], uvBounds[3]);
+//        displayBitmapWithAspectRatio(outputBitmap);
+//      }
 
 //      latestRenderBitmap = outputBitmap;
-      latestRenderBitmap = imageBitmap;
+//      latestRenderBitmap = imageBitmap;
+
+      outputBitmap = flipBitmapVertically(outputBitmap);
+
+      displayBitmapWithAspectRatio(imageBitmap);
+      runOnUiThread(() -> {});  // Nudge UI thread to resume processing
+
+      depthMapRenderer.updateBitmap(outputBitmap);
 
       clearBitmapView();
 
@@ -719,7 +750,91 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     return Bitmap.createBitmap(src, 0, 0, src.getWidth(), src.getHeight(), matrix, true);
   }
 
-  private Bitmap renderCameraToLetterboxedSquareFBO(Frame frame) {
+  private Bitmap getBitmapFromFrame(Frame frame) {
+    int fboWidth = viewWidth;
+    int fboHeight = viewHeight;
+
+    // Initialize FBO and texture if needed
+    if (offscreenFramebuffer == -1 || offscreenWidth != fboWidth || offscreenHeight != fboHeight) {
+      offscreenWidth = fboWidth;
+      offscreenHeight = fboHeight;
+
+      if (offscreenFramebuffer != -1) {
+        GLES20.glDeleteTextures(1, new int[]{offscreenTexture}, 0);
+        GLES20.glDeleteFramebuffers(1, new int[]{offscreenFramebuffer}, 0);
+      }
+
+      int[] fb = new int[1];
+      GLES20.glGenFramebuffers(1, fb, 0);
+      offscreenFramebuffer = fb[0];
+
+      int[] tex = new int[1];
+      GLES20.glGenTextures(1, tex, 0);
+      offscreenTexture = tex[0];
+
+      GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, offscreenTexture);
+      GLES20.glTexImage2D(
+              GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
+              fboWidth, fboHeight, 0,
+              GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null
+      );
+      GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+      GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+      GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
+      GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
+
+      GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, offscreenFramebuffer);
+      GLES20.glFramebufferTexture2D(
+              GLES20.GL_FRAMEBUFFER,
+              GLES20.GL_COLOR_ATTACHMENT0,
+              GLES20.GL_TEXTURE_2D,
+              offscreenTexture,
+              0
+      );
+
+      int status = GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER);
+      if (status != GLES20.GL_FRAMEBUFFER_COMPLETE) {
+        Log.e(TAG, "Framebuffer is not complete: " + status);
+      }
+
+      GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+    }
+
+    // Save current GL state
+    int[] prevFramebuffer = new int[1];
+    GLES20.glGetIntegerv(GLES20.GL_FRAMEBUFFER_BINDING, prevFramebuffer, 0);
+    int[] prevViewport = new int[4];
+    GLES20.glGetIntegerv(GLES20.GL_VIEWPORT, prevViewport, 0);
+
+    // Bind FBO and set viewport to match view size
+    GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, offscreenFramebuffer);
+    GLES20.glViewport(0, 0, fboWidth, fboHeight);
+
+    // Clear FBO
+    GLES20.glClearColor(0f, 0f, 0f, 1f);
+    GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+
+    // Draw background to FBO
+    backgroundRenderer.draw(frame);
+
+    // Read pixels
+    ByteBuffer buffer = ByteBuffer.allocateDirect(fboWidth * fboHeight * 4);
+    buffer.order(ByteOrder.nativeOrder());
+    GLES20.glReadPixels(0, 0, fboWidth, fboHeight, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buffer);
+
+    // Restore previous GL state
+    GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, prevFramebuffer[0]);
+    GLES20.glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+
+    // Convert to bitmap
+    Bitmap bitmap = Bitmap.createBitmap(fboWidth, fboHeight, Bitmap.Config.ARGB_8888);
+    buffer.rewind();
+    bitmap.copyPixelsFromBuffer(buffer);
+
+    return bitmap;
+  }
+
+  private Bitmap getBitmapFromFrameLetterBox(Frame frame) {
     int fboSize = 256;
 
     // Initialize FBO and texture if needed
@@ -798,10 +913,8 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 
   public void displayBitmapWithAspectRatio(Bitmap bitmap) {
     if (bitmap == null || bitmapView == null) return;
-
-    clearBitmapView();
-
     runOnUiThread(() -> {
+      clearBitmapView();
       bitmapView.setAdjustViewBounds(true);
       bitmapView.setScaleType(ImageView.ScaleType.FIT_CENTER);
       bitmapView.setAlpha(1.0f);
@@ -822,6 +935,38 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     return Bitmap.createBitmap(source, xOffset, yOffset, size, size);
   }
 
+  public static Bitmap cropBitmapByUV(Bitmap source, float uMin, float vMin, float uMax, float vMax) {
+    if (source == null) {
+      throw new IllegalArgumentException("Source bitmap is null");
+    }
+
+    // Clamp UVs to [0, 1]
+    uMin = Math.max(0f, Math.min(1f, uMin));
+    uMax = Math.max(0f, Math.min(1f, uMax));
+    vMin = Math.max(0f, Math.min(1f, vMin));
+    vMax = Math.max(0f, Math.min(1f, vMax));
+
+    // Ensure min < max
+    if (uMax <= uMin || vMax <= vMin) {
+      throw new IllegalArgumentException("Invalid UV bounds");
+    }
+
+    int width = source.getWidth();
+    int height = source.getHeight();
+
+    int x = Math.round(uMin * width);
+    int y = Math.round(vMin * height);
+    int cropWidth = Math.round((uMax - uMin) * width);
+    int cropHeight = Math.round((vMax - vMin) * height);
+
+    // Clamp to bitmap bounds
+    x = Math.max(0, Math.min(x, width - 1));
+    y = Math.max(0, Math.min(y, height - 1));
+    cropWidth = Math.min(cropWidth, width - x);
+    cropHeight = Math.min(cropHeight, height - y);
+
+    return Bitmap.createBitmap(source, x, y, cropWidth, cropHeight);
+  }
   public void clearBitmapView() {
     if (bitmapView == null) return;
 
@@ -829,6 +974,24 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
       bitmapView.setImageBitmap(null);
       bitmapView.setVisibility(View.GONE);
     });
+  }
+
+  public static Bitmap padBitmapToSquare(Bitmap input) {
+    int width = input.getWidth();
+    int height = input.getHeight();
+    int size = Math.max(width, height);
+
+    // Create a square bitmap filled with black
+    Bitmap padded = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+    Canvas canvas = new Canvas(padded);
+    canvas.drawColor(Color.BLACK);
+
+    // Compute top-left corner to center the input bitmap
+    int offsetX = (size - width) / 2;
+    int offsetY = (size - height) / 2;
+
+    canvas.drawBitmap(input, offsetX, offsetY, null);
+    return padded;
   }
 
 }
