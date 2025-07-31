@@ -19,12 +19,16 @@ package com.google.ar.core.codelab.rawdepth;
 import android.content.res.AssetFileDescriptor;
 
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 
+import android.graphics.ImageFormat;
 import android.graphics.Matrix;
 
 //import android.graphics.Bitmap;
+import android.graphics.Rect;
+import android.graphics.YuvImage;
 import android.media.Image;
 
 import android.opengl.GLES20;
@@ -55,15 +59,17 @@ import com.google.ar.core.Camera;
 import com.google.ar.core.Config;
 import com.google.ar.core.Frame;
 import com.google.ar.core.Session;
+import com.google.ar.core.TrackingState;
 import com.google.ar.core.codelab.common.helpers.CameraPermissionHelper;
 import com.google.ar.core.codelab.common.helpers.DisplayRotationHelper;
 import com.google.ar.core.codelab.common.helpers.FullScreenHelper;
 import com.google.ar.core.codelab.common.helpers.SnackbarHelper;
 
+import com.google.ar.core.codelab.common.helpers.TrackingStateHelper;
 import com.google.ar.core.codelab.common.rendering.BackgroundRenderer;
 import com.google.ar.core.codelab.common.rendering.DepthMapRenderer;
 import com.google.ar.core.codelab.common.rendering.DepthRenderer;
-import com.google.ar.core.codelab.common.rendering.OverlayRenderer;
+//import com.google.ar.core.codelab.common.rendering.OverlayRenderer;
 
 
 import com.google.ar.core.exceptions.CameraNotAvailableException;
@@ -72,6 +78,8 @@ import com.google.ar.core.exceptions.UnavailableArcoreNotInstalledException;
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException;
 import com.google.ar.core.exceptions.UnavailableSdkTooOldException;
 import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException;
+
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
 import javax.microedition.khronos.egl.EGLConfig;
@@ -81,47 +89,51 @@ import javax.microedition.khronos.opengles.GL10;
 import org.tensorflow.lite.Interpreter;
 
 import java.io.FileInputStream;
+import java.nio.FloatBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
-
-/**
- * This is a simple example that shows how to create an augmented reality (AR) application using the
- * ARCore Raw Depth API. The application will show 3D point-cloud data of the environment.
- */
 public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurfaceView.Renderer {
 
-  // <editor-fold desc="Member Variables">
+// <editor-fold desc="Member Variables">
   private static final String TAG = RawDepthCodelabActivity.class.getSimpleName();
 
-  // Rendering. The Renderers are created here, and initialized when the GL surface is created.
-  private GLSurfaceView surfaceView;
+  // Views
+  private GLSurfaceView glSurfaceView;  // needs to be resumed/paused etc. because it live on GL rendering thread
+  //  private ImageView debugDepthInputView;
+  private ImageView bitmapView; // doesn't need resumed/paused etc. because it is passive
 
-  private boolean installRequested;
-
-  private Session session;
-  private final SnackbarHelper messageSnackbarHelper = new SnackbarHelper();
-  private DisplayRotationHelper displayRotationHelper;
-
+  // Renderers
   private final BackgroundRenderer backgroundRenderer = new BackgroundRenderer();
   private final DepthRenderer depthRenderer = new DepthRenderer();
 
   private final DepthMapRenderer depthMapRenderer = new DepthMapRenderer();
 
-  private final OverlayRenderer overlayRenderer = new OverlayRenderer();
+//  private final OverlayRenderer overlayRenderer = new OverlayRenderer();
   private Bitmap latestRenderBitmap = null;
 
-  // Inside your RawDepthCodelabActivity class:
+
+  // ARCore session
+  private Session session;
+  private boolean installRequested; // came from Codelab example
+
+  // snackbar to say waiting for depth data
+  private final SnackbarHelper messageSnackbarHelper = new SnackbarHelper();
+
+  // what it says on the tin?
+  private DisplayRotationHelper displayRotationHelper;
+
+  // The Midas-2.0 nana model for relative depth
   private Interpreter tflite_interpreter;
   private static final String MODEL_PATH = "midas_nano.tflite"; // Replace with your model filename
 
+  // keeping track of screen view size
   private int viewWidth;
   private int viewHeight;
 
-  private float[] uvBounds = null;
-
+  //  private float[] uvBounds = null;
 
   // Offscreen framebuffer and texture for MiDaS letterboxed input
   private int offscreenFramebuffer = -1;
@@ -129,37 +141,40 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
   private int offscreenWidth = -1;
   private int offscreenHeight = -1;
 
-  private ImageView debugDepthInputView;
-  private ImageView bitmapView;
 // </editor-fold>
 
-  // <editor-fold desc="Activity Lifecycle">
+// <editor-fold desc="Activity Lifecycle">
+
   @Override
   protected void onCreate(Bundle savedInstanceState) {
 
+    // housekeeping
     super.onCreate(savedInstanceState);
     setContentView(R.layout.activity_main);
 
+    // set up the member variable view IDs
+    glSurfaceView = findViewById(R.id.surfaceview);
     bitmapView = findViewById(R.id.debug_depth_input_view);
+//    debugDepthInputView = findViewById(R.id.debug_depth_input_view);
 
-    debugDepthInputView = findViewById(R.id.debug_depth_input_view);
-
-    surfaceView = findViewById(R.id.surfaceview);
+    // instantiate the member display rotation helper
     displayRotationHelper = new DisplayRotationHelper(/*context=*/ this);
 
-    // Set up renderer.
-    surfaceView.setPreserveEGLContextOnPause(true);
-    surfaceView.setEGLContextClientVersion(2);
-    surfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 0); // Alpha used for plane blending.
-    surfaceView.setRenderer(this);
-    surfaceView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
-    surfaceView.setWillNotDraw(false);
+    // Set up the glSurfaceView, which will be used for the rendering
+    glSurfaceView.setPreserveEGLContextOnPause(true);
+    glSurfaceView.setEGLContextClientVersion(2);
+    glSurfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 0); // Alpha used for plane blending.
+    glSurfaceView.setRenderer(this);
+    glSurfaceView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY); // tells GL thread to call this once per frame
+    glSurfaceView.setWillNotDraw(false);
 
+    // Assume we don't need to install
     installRequested = false;
 
+    // make sure the bitmap view is on the top
     bitmapView.bringToFront();
 
-
+    // (try to) load the model
     try {
       tflite_interpreter = new Interpreter(loadModelFile(this));
     } catch (IOException e) {
@@ -172,10 +187,15 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
   protected void onResume() {
     super.onResume();
 
+    // if the session is null (i.e. not started),
     if (session == null) {
+
       Exception exception = null;
       String message = null;
+
       try {
+
+        // check to see if it is installed or needs installing
         switch (ArCoreApk.getInstance().requestInstall(this, !installRequested)) {
           case INSTALL_REQUESTED:
             installRequested = true;
@@ -184,15 +204,16 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
             break;
         }
 
-        // ARCore requires camera permissions to operate. If we did not yet obtain runtime
-        // permission on Android M and above, now is a good time to ask the user for it.
+        // check and if necessary request camera persmission
         if (!CameraPermissionHelper.hasCameraPermission(this)) {
           CameraPermissionHelper.requestCameraPermission(this);
           return;
         }
 
-// Create the ARCore session.
+        // Create the ARCore session.
         session = new Session(/* context= */ this);
+
+        // if depth mode is not supported, set the local message variable to tell the user
         if (!session.isDepthModeSupported(Config.DepthMode.RAW_DEPTH_ONLY)) {
           message =
                   "This device does not support the ARCore Raw Depth API. See" +
@@ -218,15 +239,16 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
         exception = e;
       }
 
+      // if a message was set, show the message and log it.
       if (message != null) {
         messageSnackbarHelper.showError(this, message);
         Log.e(TAG, "Exception creating session", exception);
         return;
       }
+
     }
 
     try {
-      // ************ New code to add ***************
       // Enable raw depth estimation and auto focus mode while ARCore is running.
       Config config = session.getConfig();
       config.setDepthMode(Config.DepthMode.RAW_DEPTH_ONLY);
@@ -241,8 +263,9 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     }
 
     // Note that order matters - see the note in onPause(), the reverse applies here.
-    surfaceView.onResume();
-    displayRotationHelper.onResume();
+    glSurfaceView.onResume(); // calls the GL onDrawFrame() method (overridden in this class)
+    displayRotationHelper.onResume(); // needs the the GL thread to be active as per the glSurfaceView.onResume() call above
+
     messageSnackbarHelper.showMessage(this, "Waiting for depth data...");
   }
 
@@ -254,7 +277,7 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
       // to query the session. If Session is paused before GLSurfaceView, GLSurfaceView may
       // still call session.update() and get a SessionPausedException.
       displayRotationHelper.onPause();
-      surfaceView.onPause();
+      glSurfaceView.onPause();
       session.pause();
     }
 
@@ -297,33 +320,42 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     FullScreenHelper.setFullScreenOnWindowFocusChanged(this, hasFocus);
   }
 
+// </editor-fold
+
+// <editor-fold desc="OpenGL calls">
+
   @Override
+  // Called once when the rendering surface is first created.
+  // A surface is a buffer-backed drawing target, into which we put whatever we want to render
   public void onSurfaceCreated(GL10 gl, EGLConfig config) {
-    GLES20.glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 
-    // Prepare the rendering objects. This involves reading shaders, so may throw an IOException.
-    try {
-      // Create the texture and pass it to ARCore session to be filled during update().
-      backgroundRenderer.createOnGlThread(/*context=*/ this);
+  // default background - dark grey, opaque
+  GLES20.glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 
-      depthRenderer.createOnGlThread(/*context=*/ this);
+  // Prepare the rendering objects. This involves reading shaders, so may throw an IOException.
+  try {
+    // set up the GL renderers using the methods in those classes
+    backgroundRenderer.createOnGlThread(/*context=*/ this);
+    depthRenderer.createOnGlThread(/*context=*/ this);
 
+    // <editor-fold desc="Overlay renderer - not used">
+    // Provide a dummy placeholder bitmap on first load
+//      Bitmap placeholderBitmap = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888);
+//      placeholderBitmap.eraseColor(Color.TRANSPARENT);  // Fill with transparent black (0 alpha)
 
+//      overlayRenderer.createOnGlThread(this, placeholderBitmap);
+//      latestRenderBitmap = placeholderBitmap;
+    // </editor-fold>
 
-      // Provide a dummy placeholder bitmap on first load
-      Bitmap placeholderBitmap = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888);
-      placeholderBitmap.eraseColor(Color.TRANSPARENT);  // Fill with transparent black (0 alpha)
-
-      overlayRenderer.createOnGlThread(this, placeholderBitmap);
-
-      latestRenderBitmap = placeholderBitmap;
-
-    } catch (IOException e) {
-      Log.e(TAG, "Failed to read an asset file", e);
-    }
+  } catch (IOException e) {
+    Log.e(TAG, "Failed to read an asset file", e);
   }
+}
 
   @Override
+  // Called when the rendering surface changes
+  // A surface is a buffer-backed drawing target, into which we put whatever we want to render
+  // It might change if, say, the phone is rotated (when it will change orientation)
   public void onSurfaceChanged(GL10 gl, int width, int height) {
     displayRotationHelper.onSurfaceChanged(width, height);
     GLES20.glViewport(0, 0, width, height);
@@ -336,312 +368,217 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
   }
 
   @Override
+  // Called once per frame, since we set glSurfaceView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
+  // If it doesn't finish before next frame is ready, that frame is dropped
+  // i.e. everything waits for this to finish
   public void onDrawFrame(GL10 gl) {
 
-    // Clear screen to notify driver it should not load any pixels from previous frame.
+    // Clear the screen buffers - backgroundRenderer etc. will write to these with the results for this frame
     GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
 
+    // return (i.e. do nothing) if the session is null
     if (session == null) {
       return;
     }
+
     // Notify ARCore session that the view size changed so that the perspective matrix and
     // the video background can be properly adjusted.
+    // updates ARCores internal projecto matrix and rendering params based on screen rotation and view size
     displayRotationHelper.updateSessionIfNeeded(session);
 
     try {
 
+      // tell ARCore where to write the camera image
       session.setCameraTextureName(backgroundRenderer.getTextureId());
 
+      // get the latest frame
       Frame frame = session.update();
-
-      backgroundRenderer.draw(frame);
-
-      // Retrieve the depth data for this frame.
       Camera camera = frame.getCamera();
 
-//      float[] modelMatrix = new float[16];
-//      frame.getCamera().getPose().toMatrix(modelMatrix, 0);
-//      FloatBuffer points = DepthData.create(frame, modelMatrix);
-//
-//      if (points != null) {
-//        if (messageSnackbarHelper.isShowing() && points != null) {
-//          messageSnackbarHelper.hide(this);
-//        }
-//
-//        // Visualize depth points.
-//        depthRenderer.update(points);
-//        depthRenderer.draw(camera);
-//
-//        // If not tracking, show tracking failure reason instead.
-//        if (camera.getTrackingState() == TrackingState.PAUSED) {
-//          messageSnackbarHelper.showMessage(
-//                  this, TrackingStateHelper.getTrackingFailureReasonString(camera));
-//          return;
-//        }
-//      }
+      // write the frame picture to the colour buffer; GL thread (?) will display when it feels like it?
+      backgroundRenderer.draw(frame);
 
+      // Retrieve the depth data for this frame,
+      // calculating world coordinates for strided points
+      // and filtering by confidence
+      FloatBuffer points = DepthData.create(frame, session.createAnchor(camera.getPose()));
+
+      // if we didn't get any points, return
+      if (points == null) {
+        return;
+      }
+
+      // now we've got depth data, drop the snackbar notification
+      if (messageSnackbarHelper.isShowing()) {
+        messageSnackbarHelper.hide(this);
+      }
+
+      // Load the depth points into depthRenderer
+      depthRenderer.update(points);
+      depthRenderer.draw(camera);
+
+//      Image depthImage = frame.acquireRawDepthImage16Bits();
+//      Image confidenceImage = frame.acquireRawDepthConfidenceImage();
+//      Image image = frame.acquireCameraImage();
+
+      // If not tracking, show tracking failure reason instead.
+      if (camera.getTrackingState() == TrackingState.PAUSED) {
+        messageSnackbarHelper.showMessage(
+                this, TrackingStateHelper.getTrackingFailureReasonString(camera));
+        return;
+      }
+
+      runDepthEstimation(frame, false);
+
+    }
+
+    // <editor-fold desc="Overlay renderer - not used">
 //      if (latestRenderBitmap != null) {
 //        overlayRenderer.updateTexture(latestRenderBitmap);
 //        overlayRenderer.draw(frame);
 //      }
 //      uvBounds = overlayRenderer.getUvBounds();
+    // </editor-fold>
 
-      runDepthEstimation(frame);
-
-    } catch (Throwable t) {
+    catch (Throwable t) {
       // Avoid crashing the application due to unhandled exceptions.
       Log.e(TAG, "Exception on the OpenGL thread", t);
     }
 
   }
 
-  // </editor-fold>
+// </editor-fold>
 
-  // Helper method to load the model file
-  private MappedByteBuffer loadModelFile(AppCompatActivity activity) throws IOException {
-    AssetFileDescriptor fileDescriptor = activity.getAssets().openFd(MODEL_PATH);
-    FileInputStream inputStream = new FileInputStream(fileDescriptor.getFileDescriptor());
-    FileChannel fileChannel = inputStream.getChannel();
-    long startOffset = fileDescriptor.getStartOffset();
-    long declaredLength = fileDescriptor.getDeclaredLength();
-    return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength);
-  }
+// <editor-fold desc="Main depth estimation method">
+  private void runDepthEstimation(Frame frame, boolean runDepth) {
 
-  private void runDepthEstimation(Frame frame) {
+    Image image = null;
     try {
 
+      // Get bitmap from Camera image
+      image = frame.acquireCameraImage();
+      Bitmap imageBitmap = imageToBitmap(image);
+
+      // rotate bitmap to match display orientation
+      // and more importantly, align vertical axis in world with vertical axis in bitmap for Midas
       int displayRotation = getWindowManager().getDefaultDisplay().getRotation();
       int rotationDegrees = getCameraImageRotationDegrees(this, displayRotation);
+      Bitmap bitmap = rotateBitmap(imageBitmap, rotationDegrees);
 
-      // using render to write to file buffer
-      Bitmap imageBitmap = getBitmapFromFrameLetterBox(frame);
-//      Bitmap imageBitmap = getBitmapFromFrame(frame);
+      // shrink the bitmap to 256x256, which amounts to vertical real-world compression
+      // we can think about padding or cropping to preserve real-world aspect later
+      bitmap = Bitmap.createScaledBitmap(bitmap, 256, 256, true);
 
-      displayBitmapWithAspectRatio(imageBitmap);
-      runOnUiThread(() -> {});  // Nudge UI thread to resume processing
+      // if runDepth pathway selected, run the Midas model and create a coloured depth map
+      // otherwise skip, so the original bitmap (still scaled to 256x256) is treated as the
+      // coloured depth map would be - for testing transformations and inspection
+      if (runDepth) {
 
-
-      if (false) {
-        imageBitmap = flipBitmapVertically(imageBitmap);
-        displayBitmapWithAspectRatio(imageBitmap);
-        runOnUiThread(() -> {
-        });  // Nudge UI thread to resume processing
-
-        imageBitmap = padBitmapToSquare(imageBitmap);
-        displayBitmapWithAspectRatio(imageBitmap);
-        runOnUiThread(() -> {
-        });  // Nudge UI thread to resume processing
-
-        imageBitmap = Bitmap.createScaledBitmap(imageBitmap, 256, 256, true);
-        displayBitmapWithAspectRatio(imageBitmap);
-        runOnUiThread(() -> {
-        });  // Nudge UI thread to resume processing
-      }
-
-      // get camera image directly
-//      Image image = frame.acquireCameraImage();
-//      Bitmap imageBitmap = imageToBitmap(image);
-//      displayBitmapWithAspectRatio(imageBitmap);
-//      image.close();
-
-      Bitmap outputBitmap;
-
-      if (false) {
-
-        // centre crop
-  //      bitmap = cropCenterSquare(bitmap);
-
-        // now rotate the bitmap
-//        Bitmap rotatedImageBitmap = rotateBitmap(imageBitmap, rotationDegrees);
-//        displayBitmapWithAspectRatio(rotatedImageBitmap);
-//
-//        // scale to 256x256
-//        Bitmap scaledRotatedImageBitmap = Bitmap.createScaledBitmap(rotatedImageBitmap, 256, 256, true);
-//        displayBitmapWithAspectRatio(scaledRotatedImageBitmap);
-
-         // use this to display the input bitmap as a transparent render for checking
-  //      inputBitmap = flipBitmapVertically(inputBitmap);
-  //      depthMapRenderer.updateBitmap(inputBitmap);
-
-        Bitmap inputBitmap = imageBitmap;
-        // run through Midas
-        // prepare the input buffer
-        ByteBuffer inputBuffer = ByteBuffer.allocateDirect(1 * 256 * 256 * 3 * 4); // 1 image, 256x256, 3 channels, 4 bytes per float
-        inputBuffer.order(ByteOrder.nativeOrder());
-        for (int y = 0; y < 256; y++) {
-          for (int x = 0; x < 256; x++) {
-            int pixel = inputBitmap.getPixel(x, y);
-            inputBuffer.putFloat(((pixel >> 16) & 0xFF) / 255f); // R
-            inputBuffer.putFloat(((pixel >> 8) & 0xFF) / 255f);  // G
-            inputBuffer.putFloat((pixel & 0xFF) / 255f);         // B
-          }
-        }
-
-        // create empty output buffer to write to
+        // convert bitmap to input buffer and create empty output buffer to write to
+        ByteBuffer inputBuffer = bitmapToByteBuffer(bitmap);
         float[][][][] outputBuffer = new float[1][256][256][1];
 
         // run Midas
         tflite_interpreter.run(inputBuffer, outputBuffer);
 
         // create coloured bitmap from Midas output buffer
-        outputBitmap = createColorMappedBitmap(outputBuffer, 256, 256);
-
-        displayBitmapWithAspectRatio(outputBitmap);
-
-        outputBitmap = Bitmap.createScaledBitmap(outputBitmap, 480, 640, true);
-        displayBitmapWithAspectRatio(outputBitmap);
-
-        outputBitmap = rotateBitmap(outputBitmap, -rotationDegrees);
-        displayBitmapWithAspectRatio(outputBitmap);
-
-        // flip it horizontally to match what the renderer wants
-  //      outputBitmap = flipBitmapHorizontally(outputBitmap);
-  //      displayBitmapWithAspectRatio(outputBitmap);
-
-  //      outputBitmap = flipBitmapVertically(outputBitmap);
-  //      outputBitmap = flipBitmapHorizontally(outputBitmap);
-  //      depthMapRenderer.updateBitmap(outputBitmap);
-      }
-      else {
-        outputBitmap = imageBitmap;
+        bitmap = createColorMappedBitmap(outputBuffer, 256, 256);
       }
 
+      bitmap = Bitmap.createScaledBitmap(bitmap, 480, 640, true);
+      displayBitmapWithAspectRatio(bitmap);
 
-//      if (uvBounds != null) {
-//        outputBitmap = cropBitmapByUV(outputBitmap, uvBounds[0], uvBounds[1], uvBounds[2], uvBounds[3]);
-//        displayBitmapWithAspectRatio(outputBitmap);
-//      }
+    }
 
-//      latestRenderBitmap = outputBitmap;
-//      latestRenderBitmap = imageBitmap;
-
-      outputBitmap = flipBitmapVertically(outputBitmap);
-
-      displayBitmapWithAspectRatio(imageBitmap);
-      runOnUiThread(() -> {});  // Nudge UI thread to resume processing
-
-      depthMapRenderer.updateBitmap(outputBitmap);
-
-      clearBitmapView();
-
-    } catch (Exception e) {
+    catch (Exception e) {
       Log.e("Depth", "Depth estimation failed: " + e.getMessage(), e);
     }
+
+    finally {
+      if (image != null) image.close();
+    }
+  }
+// </editor-fold>
+
+// <editor-fold desc="Helper Methods - images">
+
+  private ByteBuffer bitmapToByteBuffer(Bitmap bitmap) {
+
+    ByteBuffer inputBuffer = ByteBuffer.allocateDirect(1 * 256 * 256 * 3 * 4); // 1 image, 256x256, 3 channels, 4 bytes per float
+    inputBuffer.order(ByteOrder.nativeOrder());
+    for (int y = 0; y < 256; y++) {
+      for (int x = 0; x < 256; x++) {
+        int pixel = bitmap.getPixel(x, y);
+        inputBuffer.putFloat(((pixel >> 16) & 0xFF) / 255f); // R
+        inputBuffer.putFloat(((pixel >> 8) & 0xFF) / 255f);  // G
+        inputBuffer.putFloat((pixel & 0xFF) / 255f);         // B
+      }
+    }
+
+    return inputBuffer;
   }
 
 
   private Bitmap imageToBitmap(Image image) {
-    // IMPORTANT: Implement YUV_420_888 to RGB (Bitmap) conversion here.
-    // This is a complex operation. Common ways to do it:
-    // 1. RenderScript (efficient, but deprecated from API 31, works for older APIs)
-    // 2. Custom Java/C++ conversion (can be slow if not optimized)
-    // 3. Using a library that handles YUV conversion.
-
-    // Placeholder - replace with actual conversion
-    if (image.getFormat() != android.graphics.ImageFormat.YUV_420_888) {
-      Log.e("DepthModel", "Image format is not YUV_420_888. Conversion might be incorrect.");
-      // Or throw an exception
+    if (image.getFormat() != ImageFormat.YUV_420_888) {
+      Log.e("DepthModel", "Unexpected image format: " + image.getFormat());
       return null;
     }
 
-    // Example using a simple (but potentially slow for real-time) direct conversion
-    // for demonstration. For production, use RenderScript or a native library.
-    Image.Plane[] planes = image.getPlanes();
-    ByteBuffer yBuffer = planes[0].getBuffer();
-    ByteBuffer uBuffer = planes[1].getBuffer();
-    ByteBuffer vBuffer = planes[2].getBuffer();
-
-    int ySize = yBuffer.remaining();
-    int uSize = uBuffer.remaining();
-    int vSize = vBuffer.remaining();
-
-    byte[] nv21 = new byte[ySize + uSize + vSize];
-
-    yBuffer.get(nv21, 0, ySize);
-    // For NV21, V comes before U. For YUV_420_888 Plane 1 is U and Plane 2 is V
-    // The pixel stride for U and V planes can be 2, meaning they are interleaved.
-    // This example assumes they are not interleaved and V plane follows U plane data
-    // which might not be the case directly.
-    // A more robust conversion is needed here.
-
-    // This basic NV21 assembly from separate Y,U,V planes is tricky and error-prone.
-    // It's highly recommended to use a library or RenderScript for YUV_420_888 to Bitmap.
-
-    // Assuming you have a byte[] in NV21 format (which is YUV_420_SP)
-    // You'd then convert NV21 to Bitmap.
-    // For now, let's return a dummy bitmap if direct conversion is too complex here.
-    // Log.w(TAG, "imageToBitmap: YUV_420_888 to Bitmap conversion is complex and not fully implemented here. Using a placeholder.");
-    // return Bitmap.createBitmap(image.getWidth(), image.getHeight(), Bitmap.Config.ARGB_8888); // Placeholder
-
-    // A more correct (but potentially still needs optimization) way using YuvImage
-    // This path assumes the image is YUV_420_888, which can be converted to NV21
-    // then to JPEG, then to Bitmap. This is indirect and not the most performant.
     try {
-      Image.Plane Y = planes[0];
-      Image.Plane U = planes[1];
-      Image.Plane V = planes[2];
+      int width = image.getWidth();
+      int height = image.getHeight();
+      Image.Plane[] planes = image.getPlanes();
 
-      int Yb = Y.getBuffer().remaining();
-      int Ub = U.getBuffer().remaining();
-      int Vb = V.getBuffer().remaining();
-
-      byte[] data = new byte[Yb + Ub + Vb];
-
-      Y.getBuffer().get(data, 0, Yb);
-      // NV21 requires VUVUVU... but U and V planes can be separate or interleaved
-      // For YUV_420_888, U and V planes have pixelStride. If pixelStride is 1, they are separate.
-      // If pixelStride is 2, U and V components are interleaved (e.g., UVUV...).
-      // ARCore typically provides non-interleaved U and V planes (pixelStride = 1 for U, V)
-      // but their row strides might differ.
-      // The order in NV21 is YYYY... VUVU...
-
-      // This is a simplified approach, direct conversion for performance is better
-      ByteBuffer yuvBytes = ByteBuffer.allocateDirect(image.getWidth() * image.getHeight() * 3 / 2);
+      // Allocate space for NV21 buffer
+      byte[] nv21 = new byte[width * height * 3 / 2];
 
       // Copy Y plane
-      yBuffer.rewind();
-      yuvBytes.put(yBuffer);
+      ByteBuffer yBuffer = planes[0].getBuffer();
+      int yRowStride = planes[0].getRowStride();
+      int yPixelStride = planes[0].getPixelStride();
 
-      // Copy V and U planes (NV21 format: Y plane, then interleaved VU plane)
-      vBuffer.rewind();
-      uBuffer.rewind();
-
-      byte[] vData = new byte[vBuffer.remaining()];
-      vBuffer.get(vData);
-
-      byte[] uData = new byte[uBuffer.remaining()];
-      uBuffer.get(uData);
-
-      // Interleave V and U data: VUVUVU...
-      // Note: ARCore's YUV_420_888 provides U plane first, then V plane.
-      // And pixel strides are usually 1 for U and V planes.
-      // Row strides might be different from width.
-      for (int row = 0; row < image.getHeight() / 2; row++) {
-        for (int col = 0; col < image.getWidth() / 2; col++) {
-          int vIndex = row * planes[2].getRowStride() + col * planes[2].getPixelStride();
-          int uIndex = row * planes[1].getRowStride() + col * planes[1].getPixelStride();
-          yuvBytes.put(vData[vIndex]);
-          yuvBytes.put(uData[uIndex]);
+      int pos = 0;
+      for (int row = 0; row < height; row++) {
+        int yOffset = row * yRowStride;
+        for (int col = 0; col < width; col++) {
+          nv21[pos++] = yBuffer.get(yOffset + col * yPixelStride);
         }
       }
 
+      // Interleave VU for NV21 format
+      ByteBuffer uBuffer = planes[1].getBuffer();
+      ByteBuffer vBuffer = planes[2].getBuffer();
+      int chromaRowStride = planes[1].getRowStride();
+      int chromaPixelStride = planes[1].getPixelStride();
 
-      android.graphics.YuvImage yuvImage = new android.graphics.YuvImage(
-              yuvBytes.array(),
-              android.graphics.ImageFormat.NV21, // YUV_420_888 can be converted to NV21
-              image.getWidth(),
-              image.getHeight(),
-              null);
-      java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-      yuvImage.compressToJpeg(new android.graphics.Rect(0, 0, image.getWidth(), image.getHeight()), 100, out);
-      byte[] imageBytes = out.toByteArray();
-      return android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
+      int uvHeight = height / 2;
+      int uvWidth = width / 2;
+
+      for (int row = 0; row < uvHeight; row++) {
+        int uvOffset = row * chromaRowStride;
+        for (int col = 0; col < uvWidth; col++) {
+          int uIndex = uvOffset + col * chromaPixelStride;
+          int vIndex = uvOffset + col * chromaPixelStride;
+
+          // V first, then U for NV21
+          nv21[pos++] = vBuffer.get(vIndex);
+          nv21[pos++] = uBuffer.get(uIndex);
+        }
+      }
+
+      YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21, width, height, null);
+      ByteArrayOutputStream out = new ByteArrayOutputStream();
+      yuvImage.compressToJpeg(new Rect(0, 0, width, height), 100, out);
+      byte[] jpegData = out.toByteArray();
+      return BitmapFactory.decodeByteArray(jpegData, 0, jpegData.length);
 
     } catch (Exception e) {
-      Log.e("DepthModel", "Error converting YUV Image to Bitmap", e);
-      return null; // Or a fallback bitmap
+      Log.e("DepthModel", "Failed to convert YUV to Bitmap", e);
+      return null;
     }
   }
+
 
   private int getCameraImageRotationDegrees(Context context, int displayRotation) {
     CameraManager cameraManager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
@@ -993,6 +930,18 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     canvas.drawBitmap(input, offsetX, offsetY, null);
     return padded;
   }
+// </editor-fold>
+
+// <editor-fold desc="Helper method to load the model file">
+  private MappedByteBuffer loadModelFile(AppCompatActivity activity) throws IOException {
+    AssetFileDescriptor fileDescriptor = activity.getAssets().openFd(MODEL_PATH);
+    FileInputStream inputStream = new FileInputStream(fileDescriptor.getFileDescriptor());
+    FileChannel fileChannel = inputStream.getChannel();
+    long startOffset = fileDescriptor.getStartOffset();
+    long declaredLength = fileDescriptor.getDeclaredLength();
+    return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength);
+  }
+// </editor-fold>
 
 }
 

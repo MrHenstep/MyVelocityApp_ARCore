@@ -15,16 +15,21 @@
 package com.google.ar.core.codelab.common.rendering;
 
 import android.content.Context;
+import android.opengl.EGLConfig;
 import android.opengl.GLES11Ext;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.support.annotation.NonNull;
 import com.google.ar.core.Coordinates2d;
 import com.google.ar.core.Frame;
+import com.google.ar.core.Session;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
+
+import javax.microedition.khronos.opengles.GL10;
 
 /**
  * This class renders the AR background from camera feed. It creates and hosts the texture given to
@@ -56,17 +61,21 @@ public class BackgroundRenderer {
 
   /**
    * Allocates and initializes OpenGL resources needed by the background renderer. Must be called on
-   * the OpenGL thread, typically in {@link GLSurfaceView.Renderer.onSurfaceCreated(GL10,
-   * EGLConfig)}.
+   * the OpenGL thread, typically in {@link GLSurfaceView.Renderer.onSurfaceCreated( GL10 ,
+   * EGLConfig )}.
    *
    * @param context Needed to access shader source.
+   * @noinspection JavadocReference
    */
   public void createOnGlThread(Context context) throws IOException {
+
     // Generate the background texture.
     int[] textures = new int[1];
     GLES20.glGenTextures(1, textures, 0);
     textureId = textures[0];
+
     int textureTarget = GLES11Ext.GL_TEXTURE_EXTERNAL_OES;
+
     GLES20.glBindTexture(textureTarget, textureId);
     GLES20.glTexParameteri(textureTarget, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
     GLES20.glTexParameteri(textureTarget, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
