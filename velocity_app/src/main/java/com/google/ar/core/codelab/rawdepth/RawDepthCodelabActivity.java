@@ -26,7 +26,6 @@ import android.graphics.Color;
 import android.graphics.ImageFormat;
 import android.graphics.Matrix;
 
-//import android.graphics.Bitmap;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.YuvImage;
@@ -34,7 +33,6 @@ import android.media.Image;
 
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
-//import android.opengl.Matrix;
 
 import android.os.Bundle;
 import android.support.v7.app.AppCompatActivity;
@@ -55,8 +53,9 @@ import android.hardware.camera2.CameraManager;
 import android.view.Surface;
 import android.content.Context;
 
+import androidx.annotation.NonNull;
+
 import com.google.ar.core.ArCoreApk;
-import com.google.ar.core.Camera;
 import com.google.ar.core.Config;
 
 import com.google.ar.core.Frame;
@@ -67,8 +66,6 @@ import com.google.ar.core.codelab.common.helpers.FullScreenHelper;
 import com.google.ar.core.codelab.common.helpers.SnackbarHelper;
 
 import com.google.ar.core.codelab.common.rendering.BackgroundRenderer;
-import com.google.ar.core.codelab.common.rendering.DepthMapRenderer;
-//import com.google.ar.core.codelab.common.rendering.OverlayRenderer;
 
 
 import com.google.ar.core.exceptions.CameraNotAvailableException;
@@ -102,17 +99,12 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 
   // Views
   private GLSurfaceView glSurfaceView;  // needs to be resumed/paused etc. because it live on GL rendering thread
-  //  private ImageView debugDepthInputView;
   private ImageView bitmapView; // doesn't need resumed/paused etc. because it is passive
 
   // Renderers
+  // *** The backgroundRenderer neatly binds the camera feed to a texture etc.
+  // *** Probably we could extract this but as it works, we just turn off the drawing for now
   private final BackgroundRenderer backgroundRenderer = new BackgroundRenderer();
-//  private final DepthRenderer depthRenderer = new DepthRenderer();
-
-  private final DepthMapRenderer depthMapRenderer = new DepthMapRenderer();
-
-//  private final OverlayRenderer overlayRenderer = new OverlayRenderer();
-  private Bitmap latestRenderBitmap = null;
 
 
   // ARCore session
@@ -128,18 +120,6 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
   // The Midas-2.0 nana model for relative depth
   private Interpreter tflite_interpreter;
   private static final String MODEL_PATH = "midas_nano.tflite"; // Replace with your model filename
-
-  // keeping track of screen view size
-  private int viewWidth;
-  private int viewHeight;
-
-  //  private float[] uvBounds = null;
-
-  // Offscreen framebuffer and texture for MiDaS letterboxed input
-  private int offscreenFramebuffer = -1;
-  private int offscreenTexture = -1;
-  private int offscreenWidth = -1;
-  private int offscreenHeight = -1;
 
 // </editor-fold>
 
@@ -288,21 +268,10 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
   protected void onDestroy() {
     super.onDestroy();
 
-    if (offscreenFramebuffer != -1) {
-      int[] fb = { offscreenFramebuffer };
-      GLES20.glDeleteFramebuffers(1, fb, 0);
-      offscreenFramebuffer = -1;
-    }
-
-    if (offscreenTexture != -1) {
-      int[] tex = { offscreenTexture };
-      GLES20.glDeleteTextures(1, tex, 0);
-      offscreenTexture = -1;
-    }
   }
 
   @Override
-  public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+  public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] results) {
     if (!CameraPermissionHelper.hasCameraPermission(this)) {
       Toast.makeText(this, "Camera permission is needed to run this application",
               Toast.LENGTH_LONG).show();
@@ -322,7 +291,7 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 
 // </editor-fold
 
-  //<editor-fold desc="OpenGL calls">
+//<editor-fold desc="GL thread calls">
 
   @Override
   // Called once when the rendering surface is first created.
@@ -360,17 +329,11 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
   public void onSurfaceChanged(GL10 gl, int width, int height) {
     displayRotationHelper.onSurfaceChanged(width, height);
     GLES20.glViewport(0, 0, width, height);
-
-    viewWidth = width;
-    viewHeight = height;
-
-    depthMapRenderer.init(width, height);  // NEW: Pass dimensions here
-
   }
 
   // </editor-fold>
 
-  //<editor-fold desc="OpenGL onDrawFram">
+//<editor-fold desc="OpenGL onDrawFram">
 
   // Called once per frame, since we set glSurfaceView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
   // If it doesn't finish before next frame is ready, that frame is dropped
@@ -397,41 +360,16 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 
       try {
 
-          // tell ARCore where to write the camera image
           session.setCameraTextureName(backgroundRenderer.getTextureId());
-
           Frame frame = session.update();     // get the latest frame
-          Camera camera = frame.getCamera();  //
-
-//          backgroundRenderer.draw(frame); // write the frame picture to the colour buffer; GL thread (?) will display when it feels like it?
 
           depthImage = frame.acquireRawDepthImage16Bits();
           confidenceImage = frame.acquireRawDepthConfidenceImage();
-
-//          FloatBuffer points = DepthData.create(
-//                  frame.getCamera().getTextureIntrinsics(),
-//                  depthImage, confidenceImage,
-//                  session.createAnchor(camera.getPose()));
-//          if (points == null) return;   // if we didn't get any points, return
-//          if (messageSnackbarHelper.isShowing())
-//              messageSnackbarHelper.hide(this); // now we've got depth data, drop the snackbar notification
-//
-//          depthRenderer.update(points);
-//          depthRenderer.draw(camera);
-
           cameraImage = frame.acquireCameraImage();
 
-          runDepthEstimation(cameraImage, depthImage, confidenceImage, true);
+          runDepthEstimation(cameraImage, depthImage, confidenceImage);
 
       }
-
-      // <editor-fold desc="Overlay renderer - not used">
-//      if (latestRenderBitmap != null) {
-//        overlayRenderer.updateTexture(latestRenderBitmap);
-//        overlayRenderer.draw(frame);
-//      }
-//      uvBounds = overlayRenderer.getUvBounds();
-      // </editor-fold>
 
       catch (Throwable t) {
           // Avoid crashing the application due to unhandled exceptions.
@@ -447,83 +385,53 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 // </editor-fold>
 
 // <editor-fold desc="Main runDepthEstimation method">
-  private void runDepthEstimation(Image cameraImage, Image depthImage, Image confidenceImage, boolean runDepthModel) {
+  private void runDepthEstimation(Image cameraImage, Image depthImage, Image confidenceImage) {
 
-    int imageWidth = cameraImage.getWidth();
-    int imageHeight = cameraImage.getHeight();
-
-    Bitmap baseBitmap = null;
-    Bitmap overlayBitmap = null;
-
-    int rotationDegrees = 0;
-
-    // try to get the camera image, process it as per runDepth input, and display
     try  {
 
-      // Get bitmap from Camera image
-      Bitmap imageBitmap = imageToBitmap(cameraImage);
+      // get the image dimensions and rotation angle
+      int imageWidth = cameraImage.getWidth();
+      int imageHeight = cameraImage.getHeight();
 
-      // rotate bitmap to match display orientation
-      // and more importantly, align vertical axis in world with vertical axis in bitmap for Midas
       int displayRotation = getWindowManager().getDefaultDisplay().getRotation();
-      rotationDegrees = getCameraImageRotationDegrees(this, displayRotation);
-      Bitmap bitmap = rotateBitmap(imageBitmap, rotationDegrees);
+      int rotationDegrees = getCameraImageRotationDegrees(this, displayRotation);
 
-      // shrink the bitmap to 256x256, which amounts to vertical real-world compression
-      // we can think about padding or cropping to preserve real-world aspect later
-      bitmap = Bitmap.createScaledBitmap(bitmap, 256, 256, true);
+      // Get bitmap from Camera image
+      Bitmap cameraBitmap = imageToBitmap(cameraImage);
+      cameraBitmap = rotateBitmap(cameraBitmap, rotationDegrees);
+      Bitmap depthModelBitmap = Bitmap.createScaledBitmap(cameraBitmap, 256, 256, true);
 
-      // if runDepth pathway selected, run the Midas model and create a coloured depth map
-      // otherwise skip, so the original bitmap (still scaled to 256x256) is treated as the
-      // coloured depth map would be - for testing transformations and inspection
-      if (runDepthModel) {
+      ByteBuffer inputBuffer = bitmapToByteBuffer(depthModelBitmap);           // convert bitmap to input buffer and create empty output buffer to write to
+      float[][][][] outputBuffer = new float[1][256][256][1];
+      tflite_interpreter.run(inputBuffer, outputBuffer);  // run MIDAS
+      depthModelBitmap = createColorMappedBitmap(outputBuffer, 256, 256); // create coloured bitmap from Midas output buffer
+      depthModelBitmap = Bitmap.createScaledBitmap(depthModelBitmap, 480, 640, true);
 
-          // convert bitmap to input buffer and create empty output buffer to write to
-          ByteBuffer inputBuffer = bitmapToByteBuffer(bitmap);
-          float[][][][] outputBuffer = new float[1][256][256][1];
+      // display the depth map as a transparent overlay over the camera image
+      Bitmap combinedBitmap = cameraBitmap.copy(Bitmap.Config.ARGB_8888, true);
+      Canvas canvas = new Canvas(combinedBitmap);
+      Paint transparentPaint = new Paint();
+      transparentPaint.setAlpha(128); // or tune as needed (0=transparent, 255=opaque)
+      canvas.drawBitmap(depthModelBitmap, 0, 0, transparentPaint);
 
-          // run Midas
-          tflite_interpreter.run(inputBuffer, outputBuffer);
-
-          // create coloured bitmap from Midas output buffer
-          bitmap = createColorMappedBitmap(outputBuffer, 256, 256);
-      }
-
-      bitmap = Bitmap.createScaledBitmap(bitmap, 480, 640, true);
-//        displayBitmapWithAspectRatio(bitmap);
-
-      baseBitmap = bitmap;
-
-      // select the points with confidence > confidenceLimit
-      float[] points4d = getPointCloud(depthImage, confidenceImage, 0.5f);
-
+      // get the raw depth image, extract the depth points, and transform it to camera image space
       int depthWidth = depthImage.getWidth();
       int depthHeight = depthImage.getHeight();
-
+      float[] points4d = getPointCloud(depthImage, confidenceImage, 0.5f);
       float[] transformedPoints4d = mapDepthPointsToCameraImage(points4d, imageWidth, imageHeight, depthWidth, depthHeight);
 
-      Bitmap arcoreBitmap = drawPointsOverlay(transformedPoints4d, imageWidth, imageHeight);
-      arcoreBitmap = rotateBitmap(arcoreBitmap, rotationDegrees);
-
-      overlayBitmap = arcoreBitmap;
-
-      Bitmap combinedBitmap = baseBitmap.copy(Bitmap.Config.ARGB_8888, true);
-      Canvas canvas = new Canvas(combinedBitmap);
-
-      canvas.drawBitmap(overlayBitmap, 0, 0, null);
+      // draw the depth points over the camera and depth map images
+      Bitmap depthPointsImage = drawPointsOverlay(transformedPoints4d, imageWidth, imageHeight);
+      depthPointsImage = rotateBitmap(depthPointsImage, rotationDegrees);
+      canvas.drawBitmap(depthPointsImage, 0, 0, null);
 
       displayBitmapWithAspectRatio(combinedBitmap);
 
-      int sjdfhaks = 1;
     }
     catch (Exception e) {
       Log.e("MyDepth", "Depth estimation failed: " + e.getMessage(), e);
-
     }
 
-
-
-    return;
   }
 // </editor-fold>
 
@@ -738,9 +646,7 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     }
     depthByteBuffer.rewind();
 
-    ShortBuffer depthBuffer = depthByteBuffer.asShortBuffer();
-
-    return depthBuffer;
+    return depthByteBuffer.asShortBuffer();
   }
 
   private static ByteBuffer convertConfidenceImageToByteBuffer(Image confidence)  {
@@ -836,7 +742,6 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     }
   }
 
-
   private int getCameraImageRotationDegrees(Context context, int displayRotation) {
     CameraManager cameraManager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
 
@@ -929,182 +834,6 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     return Color.argb(255, ri, gi, bi);
   }
 
-  private Bitmap flipBitmapVertically(Bitmap src) {
-    Matrix matrix = new Matrix();
-    matrix.postScale(1f, -1f); // flip vertically
-    matrix.postTranslate(0f, src.getHeight()); // move it back into view
-    return Bitmap.createBitmap(src, 0, 0, src.getWidth(), src.getHeight(), matrix, true);
-  }
-
-  private Bitmap flipBitmapHorizontally(Bitmap src) {
-    Matrix matrix = new Matrix();
-    matrix.postScale(-1f, 1f); // flip horizontally
-//    matrix.postTranslate(0f, src.getHeight()); // move it back into view
-    matrix.postTranslate(src.getWidth(), 0f); // move it back into view
-    return Bitmap.createBitmap(src, 0, 0, src.getWidth(), src.getHeight(), matrix, true);
-  }
-
-  private Bitmap getBitmapFromFrame(Frame frame) {
-    int fboWidth = viewWidth;
-    int fboHeight = viewHeight;
-
-    // Initialize FBO and texture if needed
-    if (offscreenFramebuffer == -1 || offscreenWidth != fboWidth || offscreenHeight != fboHeight) {
-      offscreenWidth = fboWidth;
-      offscreenHeight = fboHeight;
-
-      if (offscreenFramebuffer != -1) {
-        GLES20.glDeleteTextures(1, new int[]{offscreenTexture}, 0);
-        GLES20.glDeleteFramebuffers(1, new int[]{offscreenFramebuffer}, 0);
-      }
-
-      int[] fb = new int[1];
-      GLES20.glGenFramebuffers(1, fb, 0);
-      offscreenFramebuffer = fb[0];
-
-      int[] tex = new int[1];
-      GLES20.glGenTextures(1, tex, 0);
-      offscreenTexture = tex[0];
-
-      GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, offscreenTexture);
-      GLES20.glTexImage2D(
-              GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
-              fboWidth, fboHeight, 0,
-              GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null
-      );
-      GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
-      GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
-      GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
-      GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
-
-      GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, offscreenFramebuffer);
-      GLES20.glFramebufferTexture2D(
-              GLES20.GL_FRAMEBUFFER,
-              GLES20.GL_COLOR_ATTACHMENT0,
-              GLES20.GL_TEXTURE_2D,
-              offscreenTexture,
-              0
-      );
-
-      int status = GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER);
-      if (status != GLES20.GL_FRAMEBUFFER_COMPLETE) {
-        Log.e(TAG, "Framebuffer is not complete: " + status);
-      }
-
-      GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
-    }
-
-    // Save current GL state
-    int[] prevFramebuffer = new int[1];
-    GLES20.glGetIntegerv(GLES20.GL_FRAMEBUFFER_BINDING, prevFramebuffer, 0);
-    int[] prevViewport = new int[4];
-    GLES20.glGetIntegerv(GLES20.GL_VIEWPORT, prevViewport, 0);
-
-    // Bind FBO and set viewport to match view size
-    GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, offscreenFramebuffer);
-    GLES20.glViewport(0, 0, fboWidth, fboHeight);
-
-    // Clear FBO
-    GLES20.glClearColor(0f, 0f, 0f, 1f);
-    GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
-
-    // Draw background to FBO
-    backgroundRenderer.draw(frame);
-
-    // Read pixels
-    ByteBuffer buffer = ByteBuffer.allocateDirect(fboWidth * fboHeight * 4);
-    buffer.order(ByteOrder.nativeOrder());
-    GLES20.glReadPixels(0, 0, fboWidth, fboHeight, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buffer);
-
-    // Restore previous GL state
-    GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, prevFramebuffer[0]);
-    GLES20.glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
-
-    // Convert to bitmap
-    Bitmap bitmap = Bitmap.createBitmap(fboWidth, fboHeight, Bitmap.Config.ARGB_8888);
-    buffer.rewind();
-    bitmap.copyPixelsFromBuffer(buffer);
-
-    return bitmap;
-  }
-
-  private Bitmap getBitmapFromFrameLetterBox(Frame frame) {
-    int fboSize = 256;
-
-    // Initialize FBO and texture if needed
-    if (offscreenFramebuffer == -1) {
-      int[] fb = new int[1];
-      GLES20.glGenFramebuffers(1, fb, 0);
-      offscreenFramebuffer = fb[0];
-
-      int[] tex = new int[1];
-      GLES20.glGenTextures(1, tex, 0);
-      offscreenTexture = tex[0];
-
-      GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, offscreenTexture);
-      GLES20.glTexImage2D(
-              GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
-              fboSize, fboSize, 0,
-              GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null
-      );
-      GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
-      GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
-      GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
-      GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
-
-      GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, offscreenFramebuffer);
-      GLES20.glFramebufferTexture2D(
-              GLES20.GL_FRAMEBUFFER,
-              GLES20.GL_COLOR_ATTACHMENT0,
-              GLES20.GL_TEXTURE_2D,
-              offscreenTexture,
-              0
-      );
-
-      int status = GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER);
-      if (status != GLES20.GL_FRAMEBUFFER_COMPLETE) {
-        Log.e(TAG, "Framebuffer is not complete: " + status);
-      }
-
-      GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
-    }
-
-    // Save current GL state
-    int[] prevFramebuffer = new int[1];
-    GLES20.glGetIntegerv(GLES20.GL_FRAMEBUFFER_BINDING, prevFramebuffer, 0);
-    int[] prevViewport = new int[4];
-    GLES20.glGetIntegerv(GLES20.GL_VIEWPORT, prevViewport, 0);
-
-    // Bind offscreen FBO and set letterboxed viewport
-    GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, offscreenFramebuffer);
-    int targetHeight = (int) (fboSize * 9.0f / 16.0f);
-    int offsetY = (fboSize - targetHeight) / 2;
-    GLES20.glViewport(0, offsetY, fboSize, targetHeight);
-
-    // Clear only the FBO (not screen)
-    GLES20.glClearColor(0f, 0f, 0f, 1f);
-    GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
-
-    // Draw camera into FBO only
-    backgroundRenderer.draw(frame);
-
-    // Read pixels from FBO
-    ByteBuffer buffer = ByteBuffer.allocateDirect(fboSize * fboSize * 4);
-    buffer.order(ByteOrder.nativeOrder());
-    GLES20.glReadPixels(0, 0, fboSize, fboSize, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buffer);
-
-    // Restore GL state
-    GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, prevFramebuffer[0]);
-    GLES20.glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
-
-    // Convert to bitmap
-    Bitmap bitmap = Bitmap.createBitmap(fboSize, fboSize, Bitmap.Config.ARGB_8888);
-    buffer.rewind();
-    bitmap.copyPixelsFromBuffer(buffer);
-    return bitmap;
-  }
-
-
   public void displayBitmapWithAspectRatio(Bitmap bitmap) {
     if (bitmap == null || bitmapView == null) return;
     runOnUiThread(() -> {
@@ -1118,49 +847,6 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     });
   }
 
-  public Bitmap cropCenterSquare(Bitmap source) {
-    int width = source.getWidth();
-    int height = source.getHeight();
-    int size = Math.min(width, height);
-
-    int xOffset = (width - size) / 2;
-    int yOffset = (height - size) / 2;
-
-    return Bitmap.createBitmap(source, xOffset, yOffset, size, size);
-  }
-
-  public static Bitmap cropBitmapByUV(Bitmap source, float uMin, float vMin, float uMax, float vMax) {
-    if (source == null) {
-      throw new IllegalArgumentException("Source bitmap is null");
-    }
-
-    // Clamp UVs to [0, 1]
-    uMin = Math.max(0f, Math.min(1f, uMin));
-    uMax = Math.max(0f, Math.min(1f, uMax));
-    vMin = Math.max(0f, Math.min(1f, vMin));
-    vMax = Math.max(0f, Math.min(1f, vMax));
-
-    // Ensure min < max
-    if (uMax <= uMin || vMax <= vMin) {
-      throw new IllegalArgumentException("Invalid UV bounds");
-    }
-
-    int width = source.getWidth();
-    int height = source.getHeight();
-
-    int x = Math.round(uMin * width);
-    int y = Math.round(vMin * height);
-    int cropWidth = Math.round((uMax - uMin) * width);
-    int cropHeight = Math.round((vMax - vMin) * height);
-
-    // Clamp to bitmap bounds
-    x = Math.max(0, Math.min(x, width - 1));
-    y = Math.max(0, Math.min(y, height - 1));
-    cropWidth = Math.min(cropWidth, width - x);
-    cropHeight = Math.min(cropHeight, height - y);
-
-    return Bitmap.createBitmap(source, x, y, cropWidth, cropHeight);
-  }
   public void clearBitmapView() {
     if (bitmapView == null) return;
 
