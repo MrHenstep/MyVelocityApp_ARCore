@@ -40,6 +40,7 @@ import android.util.Log;
 
 import android.view.View;
 
+import android.widget.Button;
 import android.widget.Toast;
 
 import android.widget.ImageView;
@@ -76,6 +77,8 @@ import com.google.ar.core.exceptions.UnavailableSdkTooOldException;
 import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 
 import javax.microedition.khronos.egl.EGLConfig;
@@ -121,6 +124,17 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
   private Interpreter tflite_interpreter;
   private static final String MODEL_PATH = "midas_nano.tflite"; // Replace with your model filename
 
+  //
+  private long lastProcessedTimestampNanos = 0;
+  private int numFramesTaken = 0;
+
+  private Button continueButton;
+  private final Object continueLock = new Object();
+  private boolean continuePressed = false;
+
+  private long baseTimestamp;
+
+
 // </editor-fold>
 
 // <editor-fold desc="Activity Lifecycle">
@@ -153,6 +167,9 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 
     // make sure the bitmap view is on the top
     bitmapView.bringToFront();
+
+    continueButton = findViewById(R.id.continue_button);
+    continueButton.setVisibility(View.GONE);  // Hide initially
 
     // (try to) load the model
     try {
@@ -333,21 +350,20 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 
   // </editor-fold>
 
-//<editor-fold desc="OpenGL onDrawFram">
+//<editor-fold desc="GL onDrawFrame">
 
-  // Called once per frame, since we set glSurfaceView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
-  // If it doesn't finish before next frame is ready, that frame is dropped
-  // i.e. everything waits for this to finish
   @Override
   public void onDrawFrame(GL10 gl) {
 
+      final int maxFramesToTake = 10;
+      final float throttleTime = 0.1f;
+      final long THROTTLE_NS = (long) (throttleTime * 1_000_000_000L); // throttleTime seconds in nanoseconds
+
       // Clear the screen buffers - backgroundRenderer etc. will write to these with the results for this frame
-      GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
+//      GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
 
       // return (i.e. do nothing) if the session is null
-      if (session == null) {
-          return;
-      }
+      if (session == null) return;
 
       // Notify ARCore session that the view size changed so that the perspective matrix and
       // the video background can be properly adjusted.
@@ -359,21 +375,37 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
       Image cameraImage = null;
 
       try {
+        session.setCameraTextureName(backgroundRenderer.getTextureId());
+        Frame frame = session.update();     // get the latest frame
 
-          session.setCameraTextureName(backgroundRenderer.getTextureId());
-          Frame frame = session.update();     // get the latest frame
+        depthImage = frame.acquireRawDepthImage16Bits();
+        confidenceImage = frame.acquireRawDepthConfidenceImage();
+        cameraImage = frame.acquireCameraImage();
 
-          depthImage = frame.acquireRawDepthImage16Bits();
-          confidenceImage = frame.acquireRawDepthConfidenceImage();
-          cameraImage = frame.acquireCameraImage();
+        long cameraTimestamp = cameraImage.getTimestamp();
+        long depthTimestamp = depthImage.getTimestamp();
+        long confidenceTimestamp = confidenceImage.getTimestamp();
 
-          runDepthEstimation(cameraImage, depthImage, confidenceImage);
+        numFramesTaken++;
+        if (numFramesTaken == 1) baseTimestamp = cameraTimestamp;
+
+        float cameraTimestampSeconds = (cameraTimestamp - baseTimestamp) / 1_000_000_000f;
+        float depthTimestampSeconds = (depthTimestamp - baseTimestamp) / 1_000_000_000f;
+        float confidenceTimestampSeconds = (confidenceTimestamp - baseTimestamp) / 1_000_000_000f;
+
+        // log the frame number and the timestamps
+        Log.i("Export Files", String.format(
+                "Frame, %d, Camera Timestamp, %f, Depth Timestamp, %f, Confidence Timestamp, %f",
+                numFramesTaken-1, cameraTimestampSeconds, depthTimestampSeconds, confidenceTimestampSeconds));
+
+        runDepthEstimation(cameraImage, depthImage, confidenceImage);
+
 
       }
 
       catch (Throwable t) {
           // Avoid crashing the application due to unhandled exceptions.
-          Log.e(TAG, "Exception on the OpenGL thread", t);
+          Log.e("Frame Timestamps", "Exception on the OpenGL thread", t);
       }
       finally {
         if (depthImage != null) depthImage.close();
@@ -389,36 +421,44 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 
     try  {
 
-      // get the image dimensions and rotation angle
+            // get the image dimensions and rotation angle
       int imageWidth = cameraImage.getWidth();
       int imageHeight = cameraImage.getHeight();
 
       int displayRotation = getWindowManager().getDefaultDisplay().getRotation();
       int rotationDegrees = getCameraImageRotationDegrees(this, displayRotation);
 
-      // Get bitmap from Camera image
+      // Get bitmap from Camera image and then close cameraImage
       Bitmap cameraBitmap = imageToBitmap(cameraImage);
+      cameraImage.close();  // as soon as we're done with it
       cameraBitmap = rotateBitmap(cameraBitmap, rotationDegrees);
-      Bitmap depthModelBitmap = Bitmap.createScaledBitmap(cameraBitmap, 256, 256, true);
+      Bitmap depthModelInputBitmap = Bitmap.createScaledBitmap(cameraBitmap, 256, 256, true);
 
-      ByteBuffer inputBuffer = bitmapToByteBuffer(depthModelBitmap);           // convert bitmap to input buffer and create empty output buffer to write to
-      float[][][][] outputBuffer = new float[1][256][256][1];
-      tflite_interpreter.run(inputBuffer, outputBuffer);  // run MIDAS
-      depthModelBitmap = createColorMappedBitmap(outputBuffer, 256, 256); // create coloured bitmap from Midas output buffer
-      depthModelBitmap = Bitmap.createScaledBitmap(depthModelBitmap, 480, 640, true);
+      // get the raw depth image, extract the depth points, and transform it to camera image space
+      // and then close the images
+      int depthWidth = depthImage.getWidth();
+      int depthHeight = depthImage.getHeight();
+      float[] points4d = getDepthPoints(depthImage, confidenceImage, 0.7f);
+      float[] transformedPoints4d = mapDepthPointsToCameraImage(points4d, imageWidth, imageHeight, depthWidth, depthHeight);
+      depthImage.close();
+      confidenceImage.close();
+
+        ByteBuffer inputBuffer = bitmapToByteBuffer(depthModelInputBitmap);           // convert bitmap to input buffer and create empty output buffer to write to
+        float[][][][] outputBuffer = new float[1][256][256][1];
+        tflite_interpreter.run(inputBuffer, outputBuffer);  // run MIDAS
+
+        ColourMapResult colourMapResult = createColorMappedBitmap(outputBuffer, 256, 256); // create coloured bitmap from Midas output buffer
+
+        Bitmap depthModelBitmapColour = Bitmap.createScaledBitmap(colourMapResult.colourBitmap, 480, 640, true);
+        Bitmap depthModelBitmapGrey = Bitmap.createScaledBitmap(colourMapResult.greyscaleBitmap, 480, 640, true);
 
       // display the depth map as a transparent overlay over the camera image
       Bitmap combinedBitmap = cameraBitmap.copy(Bitmap.Config.ARGB_8888, true);
       Canvas canvas = new Canvas(combinedBitmap);
-      Paint transparentPaint = new Paint();
-      transparentPaint.setAlpha(128); // or tune as needed (0=transparent, 255=opaque)
-      canvas.drawBitmap(depthModelBitmap, 0, 0, transparentPaint);
+        Paint transparentPaint = new Paint();
+        transparentPaint.setAlpha(128); // or tune as needed (0=transparent, 255=opaque)
+        canvas.drawBitmap(depthModelBitmapColour, 0, 0, transparentPaint);
 
-      // get the raw depth image, extract the depth points, and transform it to camera image space
-      int depthWidth = depthImage.getWidth();
-      int depthHeight = depthImage.getHeight();
-      float[] points4d = getPointCloud(depthImage, confidenceImage, 0.5f);
-      float[] transformedPoints4d = mapDepthPointsToCameraImage(points4d, imageWidth, imageHeight, depthWidth, depthHeight);
 
       // draw the depth points over the camera and depth map images
       Bitmap depthPointsImage = drawPointsOverlay(transformedPoints4d, imageWidth, imageHeight);
@@ -427,12 +467,39 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 
       displayBitmapWithAspectRatio(combinedBitmap);
 
+      numFramesTaken++; // update it right at the end so we don't count excpetion cases
+      Log.i("Export Files", String.format("Num Frames Taken %d", numFramesTaken-1));
+
+      if (numFramesTaken <= 10) {
+
+        saveFloatArrayToBinary(transformedPoints4d, String.format("depth_points_%d.bin", numFramesTaken-1));
+        Log.i("Export Files", String.format("Saved depth points for frame %d", numFramesTaken-1));
+
+        float[] cameraBitmapFloatArray = convertBitmapToFloatPointsArray(cameraBitmap);
+        saveFloatArrayToBinary(cameraBitmapFloatArray, String.format("depth_map_camera_%d.bin", numFramesTaken-1));
+        Log.i("Export Files", String.format("Saved depth map camera for frame %d", numFramesTaken-1));
+
+        float[] colourBitmapFloatArray = convertBitmapToFloatPointsArray(depthModelBitmapColour);
+        saveFloatArrayToBinary(colourBitmapFloatArray, String.format("depth_map_colour_%d.bin", numFramesTaken-1));
+        Log.i("Export Files", String.format("Saved depth map colour for frame %d", numFramesTaken-1));
+
+        float[] greyBitmapFloatArray = convertBitmapToFloatPointsArray(depthModelBitmapGrey);
+        saveFloatArrayToBinary(greyBitmapFloatArray, String.format("depth_map_grey_%d.bin", numFramesTaken-1));
+        Log.i("Export Files", String.format("Saved depth map grey for frame %d", numFramesTaken-1));
+
+      }
+
+
+//      waitForUser();
+
+
     }
     catch (Exception e) {
       Log.e("MyDepth", "Depth estimation failed: " + e.getMessage(), e);
     }
 
   }
+
 // </editor-fold>
 
 // <editor-fold desc="Helper Methods - ARCore Depth">
@@ -493,36 +560,8 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     return overlayBitmap;
   }
 
-  private static int rainbowColormap(float x) {
-    x = Math.max(0f, Math.min(1f, x));  // Clamp to [0, 1]
-
-    // Simple piecewise triangular functions to simulate rainbow
-    float r = clamp(1.5f - Math.abs(4f * x - 1f));
-    float g = clamp(1.5f - Math.abs(4f * x - 2f));
-    float b = clamp(1.5f - Math.abs(4f * x - 3f));
-
-    return Color.argb(255, (int)(r * 255), (int)(g * 255), (int)(b * 255));
-  }
-
   private static float clamp(float val) {
     return Math.max(0f, Math.min(1f, val));
-  }
-
-  private static int turboColormap(float x) {
-    x = Math.max(0f, Math.min(1f, x));  // Clamp to [0,1]
-
-    float r = 0.13572138f + 4.61539260f * x - 42.66032258f * x * x + 132.13108234f * x * x * x
-            - 152.94239396f * x * x * x * x + 59.28637943f * x * x * x * x * x;
-    float g = 0.09140261f + 2.19418839f * x + 4.84296658f * x * x - 42.48820538f * x * x * x
-            + 132.40959671f * x * x * x * x - 152.94239396f * x * x * x * x * x;
-    float b = 0.10667330f + 13.01742974f * x - 48.20963662f * x * x + 72.13875343f * x * x * x
-            - 40.07390243f * x * x * x * x + 8.07575687f * x * x * x * x * x;
-
-    r = Math.max(0f, Math.min(1f, r));
-    g = Math.max(0f, Math.min(1f, g));
-    b = Math.max(0f, Math.min(1f, b));
-
-    return Color.argb(255, (int)(r * 255), (int)(g * 255), (int)(b * 255));
   }
 
   public float[] mapDepthPointsToCameraImage(float[] points, int imageWidth, int imageHeight, int depthWidth, int depthHeight) {
@@ -561,7 +600,7 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     return transformedPoints;
   }
 
-  private float[] getPointCloud(Image depthImage, Image confidenceImage, final float confidenceLimit) {
+  private float[] getDepthPoints(Image depthImage, Image confidenceImage, final float confidenceLimit) {
 
     float[] points = null;
 
@@ -628,9 +667,6 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 
     return points;
   }
-// </editor-fold>
-
-//<editor-fold desc="Helper Methods - buffers">
 
   private static ShortBuffer convertDepthImageToShortBuffer(Image depth)    {
 
@@ -662,25 +698,10 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     return confidenceBuffer;
   }
 
-  //</editor-fold>
+// </editor-fold>
 
 // <editor-fold desc="Helper Methods - images">
 
-  private ByteBuffer bitmapToByteBuffer(Bitmap bitmap) {
-
-    ByteBuffer inputBuffer = ByteBuffer.allocateDirect(1 * 256 * 256 * 3 * 4); // 1 image, 256x256, 3 channels, 4 bytes per float
-    inputBuffer.order(ByteOrder.nativeOrder());
-    for (int y = 0; y < 256; y++) {
-      for (int x = 0; x < 256; x++) {
-        int pixel = bitmap.getPixel(x, y);
-        inputBuffer.putFloat(((pixel >> 16) & 0xFF) / 255f); // R
-        inputBuffer.putFloat(((pixel >> 8) & 0xFF) / 255f);  // G
-        inputBuffer.putFloat((pixel & 0xFF) / 255f);         // B
-      }
-    }
-
-    return inputBuffer;
-  }
 
   private Bitmap imageToBitmap(Image image) {
     if (image.getFormat() != ImageFormat.YUV_420_888) {
@@ -786,13 +807,7 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     return 0;
   }
 
-  private Bitmap rotateBitmap(Bitmap bitmap, int rotationDegrees) {
-    Matrix matrix = new Matrix();
-    matrix.postRotate(rotationDegrees);
-    return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-  }
-
-  private static Bitmap createColorMappedBitmap(float[][][][] depth, int width, int height) {
+  private static ColourMapResult createColorMappedBitmap(float[][][][] depth, int width, int height) {
     float min = Float.MAX_VALUE;
     float max = Float.MIN_VALUE;
 
@@ -806,6 +821,7 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     }
 
     Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+    Bitmap greyscaleBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
 
     // Second pass: map each value to a color
     for (int y = 0; y < height; y++) {
@@ -813,27 +829,30 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
         float normalized = (depth[0][y][x][0] - min) / (max - min);  // ∈ [0, 1]
         int color = infernoColormap(normalized);  // Choose colormap here
         bitmap.setPixel(x, y, color);
+
+        int grey = Math.round(normalized * 255.0f);
+        grey = Math.max(0, Math.min(255, grey)); // Clamp
+        int argb = Color.argb(255, grey, grey, grey);  // Full alpha, grayscale RGB
+        greyscaleBitmap.setPixel(x, y, argb);
       }
     }
 
-    return bitmap;
+    return new ColourMapResult(bitmap, greyscaleBitmap);
   }
 
-  private static int infernoColormap(float x) {
-    x = Math.max(0f, Math.min(1f, x));  // Clamp to [0, 1]
+  public static class ColourMapResult {
+    public final Bitmap colourBitmap;
+    public final Bitmap greyscaleBitmap;
 
-    // These constants are approximations from the Inferno colormap
-    float r = (float)Math.pow(x, 0.5);
-    float g = (float)Math.pow(x, 1.5);
-    float b = 1.0f - x;
-
-    int ri = (int)(255 * r);
-    int gi = (int)(255 * g);
-    int bi = (int)(255 * b);
-
-    return Color.argb(255, ri, gi, bi);
+    public ColourMapResult(Bitmap colorBitmap, Bitmap greyscaleBitmap) {
+      this.colourBitmap = colorBitmap;
+      this.greyscaleBitmap = greyscaleBitmap;
+    }
   }
 
+// </editor-fold>
+
+// <editor-fold desc="Helper methods - display bitmaps">
   public void displayBitmapWithAspectRatio(Bitmap bitmap) {
     if (bitmap == null || bitmapView == null) return;
     runOnUiThread(() -> {
@@ -855,7 +874,14 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
       bitmapView.setVisibility(View.GONE);
     });
   }
+// </editor-fold>
 
+// <editor-fold desc="Helper methods - bitmap transformations">
+  private Bitmap rotateBitmap(Bitmap bitmap, int rotationDegrees) {
+    Matrix matrix = new Matrix();
+    matrix.postRotate(rotationDegrees);
+    return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+  }
   public static Bitmap padBitmapToSquare(Bitmap input) {
     int width = input.getWidth();
     int height = input.getHeight();
@@ -875,7 +901,7 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
   }
 // </editor-fold>
 
-// <editor-fold desc="Helper methods - depth model">
+// <editor-fold desc="Helper methods - for Midas">
   private MappedByteBuffer loadModelFile(AppCompatActivity activity) throws IOException {
     AssetFileDescriptor fileDescriptor = activity.getAssets().openFd(MODEL_PATH);
     FileInputStream inputStream = new FileInputStream(fileDescriptor.getFileDescriptor());
@@ -884,7 +910,181 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     long declaredLength = fileDescriptor.getDeclaredLength();
     return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength);
   }
+  private ByteBuffer bitmapToByteBuffer(Bitmap bitmap) {
+
+    ByteBuffer inputBuffer = ByteBuffer.allocateDirect(1 * 256 * 256 * 3 * 4); // 1 image, 256x256, 3 channels, 4 bytes per float
+    inputBuffer.order(ByteOrder.nativeOrder());
+    for (int y = 0; y < 256; y++) {
+      for (int x = 0; x < 256; x++) {
+        int pixel = bitmap.getPixel(x, y);
+        inputBuffer.putFloat(((pixel >> 16) & 0xFF) / 255f); // R
+        inputBuffer.putFloat(((pixel >> 8) & 0xFF) / 255f);  // G
+        inputBuffer.putFloat((pixel & 0xFF) / 255f);         // B
+      }
+    }
+
+    return inputBuffer;
+  }
+
 // </editor-fold>
+
+// <editor-fold desc="Helper methods - output">
+  private void saveFloatArrayToBinary(float[] array, String filename) {
+    try {
+      File path = new File(getExternalFilesDir(null), "exported");
+      if (!path.exists()) path.mkdirs();
+
+      File file = new File(path, filename);
+      FileOutputStream fos = new FileOutputStream(file);
+      ByteBuffer buffer = ByteBuffer.allocate(array.length * 4);
+      buffer.order(ByteOrder.LITTLE_ENDIAN); // Match expected order on PC
+      for (float f : array) buffer.putFloat(f);
+      fos.write(buffer.array());
+      fos.close();
+
+      Log.i("ExportFloat", "Saved to: " + file.getAbsolutePath());
+    } catch (IOException e) {
+      Log.e("ExportFloat", "Failed to write binary float array", e);
+    }
+  }
+  public static ByteBuffer bitmapToByteBufferForOutput(Bitmap bitmap) {
+    int width = bitmap.getWidth();
+    int height = bitmap.getHeight();
+    Bitmap.Config config = bitmap.getConfig();
+
+    ByteBuffer buffer;
+
+    if (config == Bitmap.Config.ARGB_8888) {
+      // 4 bytes per pixel
+      buffer = ByteBuffer.allocate(width * height * 4);
+    } else if (config == Bitmap.Config.ALPHA_8) {
+      // 1 byte per pixel
+      buffer = ByteBuffer.allocate(width * height);
+    } else {
+      throw new IllegalArgumentException("Unsupported bitmap config: " + config);
+    }
+
+    buffer.order(ByteOrder.nativeOrder());
+    bitmap.copyPixelsToBuffer(buffer);
+    buffer.rewind();  // Reset position to 0 so it's ready for reading
+    return buffer;
+  }
+  private void saveByteBufferToBinary(ByteBuffer buffer, String filename) {
+    try {
+      File path = new File(getExternalFilesDir(null), "exported");
+      if (!path.exists()) path.mkdirs();
+
+      File file = new File(path, filename);
+      FileOutputStream fos = new FileOutputStream(file);
+
+      fos.write(buffer.array());
+      fos.close();
+
+      Log.i("ExportByteBuffer", "Saved to: " + file.getAbsolutePath());
+    } catch (IOException e) {
+      Log.e("ExportByteBuffer", "Failed to write binary ByteBuffer", e);
+    }
+  }
+  private static float[] convertBitmapToFloatPointsArray(Bitmap bitmap) {
+    int width = bitmap.getWidth();
+    int height = bitmap.getHeight();
+    float[] result = new float[width * height * 6];
+
+    int index = 0;
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        int pixel = bitmap.getPixel(x, y);
+
+        int a = (pixel >> 24) & 0xff;
+        int r = (pixel >> 16) & 0xff;
+        int g = (pixel >> 8) & 0xff;
+        int b = pixel & 0xff;
+
+        result[index++] = (float) x;
+        result[index++] = (float) y;
+        result[index++] = a / 255.0f;
+        result[index++] = r / 255.0f;
+        result[index++] = g / 255.0f;
+        result[index++] = b / 255.0f;
+      }
+    }
+
+    return result;
+  }
+// </editor-fold>
+
+// <editor-fold desc="Helper methods - Colour maps">
+  private static int rainbowColormap(float x) {
+    x = Math.max(0f, Math.min(1f, x));  // Clamp to [0, 1]
+
+    // Simple piecewise triangular functions to simulate rainbow
+    float r = clamp(1.5f - Math.abs(4f * x - 1f));
+    float g = clamp(1.5f - Math.abs(4f * x - 2f));
+    float b = clamp(1.5f - Math.abs(4f * x - 3f));
+
+    return Color.argb(255, (int)(r * 255), (int)(g * 255), (int)(b * 255));
+  }
+  private static int turboColormap(float x) {
+    x = Math.max(0f, Math.min(1f, x));  // Clamp to [0,1]
+
+    float r = 0.13572138f + 4.61539260f * x - 42.66032258f * x * x + 132.13108234f * x * x * x
+            - 152.94239396f * x * x * x * x + 59.28637943f * x * x * x * x * x;
+    float g = 0.09140261f + 2.19418839f * x + 4.84296658f * x * x - 42.48820538f * x * x * x
+            + 132.40959671f * x * x * x * x - 152.94239396f * x * x * x * x * x;
+    float b = 0.10667330f + 13.01742974f * x - 48.20963662f * x * x + 72.13875343f * x * x * x
+            - 40.07390243f * x * x * x * x + 8.07575687f * x * x * x * x * x;
+
+    r = Math.max(0f, Math.min(1f, r));
+    g = Math.max(0f, Math.min(1f, g));
+    b = Math.max(0f, Math.min(1f, b));
+
+    return Color.argb(255, (int)(r * 255), (int)(g * 255), (int)(b * 255));
+  }
+  private static int infernoColormap(float x) {
+    x = Math.max(0f, Math.min(1f, x));  // Clamp to [0, 1]
+
+    // These constants are approximations from the Inferno colormap
+    float r = (float)Math.pow(x, 0.5);
+    float g = (float)Math.pow(x, 1.5);
+    float b = 1.0f - x;
+
+    int ri = (int)(255 * r);
+    int gi = (int)(255 * g);
+    int bi = (int)(255 * b);
+
+    return Color.argb(255, ri, gi, bi);
+  }
+// </editor-fold>
+
+  private void waitForUser() {
+    // 1. Show the button and set up the click listener
+    runOnUiThread(() -> {
+      continueButton.setVisibility(View.VISIBLE);
+      continueButton.setEnabled(true);
+      continueButton.setOnClickListener(v -> {
+        synchronized (continueLock) {
+          continuePressed = true;
+          continueLock.notify();
+        }
+      });
+    });
+
+    // 2. Block the GL thread until the button is pressed
+    synchronized (continueLock) {
+      while (!continuePressed) {
+        try {
+          continueLock.wait();
+        } catch (InterruptedException e) {
+          Log.e("DepthPause", "Interrupted while waiting for user", e);
+        }
+      }
+      continuePressed = false;  // reset for next time
+    }
+
+    // 3. Hide the button again
+    runOnUiThread(() -> continueButton.setVisibility(View.GONE));
+  }
+
 
 }
 
