@@ -29,16 +29,10 @@ def show_depth_map(data):
 
 file_path = "../exported"
 
-#####################################################################################################
-use_colour = True
-#####################################################################################################
-
-
-if use_colour:
-    file_mask = "depth_map_colour_"
-else:
-    file_mask = "depth_map_grey_"
-
+# file_mask = "depth_map_colour_"
+file_mask = "depth_map_conf_"
+# file_mask = "depth_map_grey_"
+# file_mask = "depth_map_camera_"
 
 file_list = [f for f in os.listdir(file_path) if f.startswith(file_mask) and f.endswith(".bin")]
 

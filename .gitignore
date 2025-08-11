@@ -12,6 +12,9 @@ local.properties
 # OS configurations.
 .DS_Store
 
-exported/
+exported*/
 analysis/
 demos/
+# Python cache
+__pycache__/
+*.py[cod]

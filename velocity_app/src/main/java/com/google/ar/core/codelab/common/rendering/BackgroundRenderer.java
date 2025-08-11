@@ -74,6 +74,7 @@ public class BackgroundRenderer {
     GLES20.glGenTextures(1, textures, 0);
     textureId = textures[0];
 
+    // Tell OpenGL we're using an external texture, and configure it
     int textureTarget = GLES11Ext.GL_TEXTURE_EXTERNAL_OES;
 
     GLES20.glBindTexture(textureTarget, textureId);
@@ -82,6 +83,8 @@ public class BackgroundRenderer {
     GLES20.glTexParameteri(textureTarget, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
     GLES20.glTexParameteri(textureTarget, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
 
+    // *** I think, based on CGPT, that we can remove the rest of this method if we don't want to render to screen ***
+    // Allocate and fill the quad vertex coordinates
     int numVertices = 4;
 
     if (numVertices != quadCoordsData.length / COORDS_PER_VERTEX) {
@@ -95,16 +98,19 @@ public class BackgroundRenderer {
 
     quadCoords.position(0);
 
+    // Allocate transformed (for camera rotation etc.) coordinate buffer
     ByteBuffer bbTexCoordsTransformed =
         ByteBuffer.allocateDirect(numVertices * TEXCOORDS_PER_VERTEX * FLOAT_SIZE);
     bbTexCoordsTransformed.order(ByteOrder.nativeOrder());
     quadTexCoords = bbTexCoordsTransformed.asFloatBuffer();
 
+    // Load and compile shaders
     int vertexShader =
         ShaderUtil.loadGLShader(TAG, context, GLES20.GL_VERTEX_SHADER, CAMERA_VERTEX_SHADER_NAME);
     int fragmentShader =
         ShaderUtil.loadGLShader(TAG, context, GLES20.GL_FRAGMENT_SHADER, CAMERA_FRAGMENT_SHADER_NAME);
 
+    // Create shader program and get parameter handles
     quadProgram = GLES20.glCreateProgram();
     GLES20.glAttachShader(quadProgram, vertexShader);
     GLES20.glAttachShader(quadProgram, fragmentShader);

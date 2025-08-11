@@ -40,10 +40,10 @@ np.random.seed(42)
 num_rows_to_print = 10
 
 file_path = "../exported"
-file_number = "3"
+file_number = "1"
 
 file_name_points = "depth_points_" + file_number + ".bin"
-file_name_map = "depth_map_colour_" + file_number + ".bin"
+file_name_map = "depth_map_camera_" + file_number + ".bin"
 
 ###########################################################################################################
 # Load the ARCore DEPTH POINTS
