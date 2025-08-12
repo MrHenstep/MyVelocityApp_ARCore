@@ -388,9 +388,9 @@ file_path = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCor
 # file_path = cwd + "\\..\\exported"
 # file_path = "./exported"
 
-batch_number = 1
-confidence_level = 0.9
-depth_range = (0.0, 15.0)
+batch_number = 0
+confidence_level = 0.75
+depth_range = (0.0, 25.0)
 
 
 timestamps_table = read_timestamp_files(file_path, batch_number)
@@ -401,7 +401,7 @@ matched_filename_table = get_matched_filenames(nearest_match_indices, file_path,
 
 
 depth_points_indices = range(0, len(timestamps_table))
-# depth_points_indices = range(4, 5)
+depth_points_indices = range(0, 60, 10)
 
 display_collated_data(matched_filename_table, confidence_level, timestamps_table, nearest_match_indices, depth_points_indices, depth_range=depth_range)
 
@@ -409,6 +409,3 @@ histograms_and_regression(file_path, matched_filename_table, depth_points_indice
 
 
 ####################################################################################################################
-
-# **** Put points on fixed colour scale
-# **** check confidence cut-off
