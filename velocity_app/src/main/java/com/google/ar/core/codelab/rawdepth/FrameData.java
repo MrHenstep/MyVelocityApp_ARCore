@@ -10,7 +10,12 @@ import android.graphics.YuvImage;
 import android.media.Image;
 import android.util.Log;
 
+import com.google.ar.core.Camera;
+import com.google.ar.core.CameraIntrinsics;
 import com.google.ar.core.Frame;
+import com.google.ar.core.Pose;
+import com.google.ar.core.exceptions.CameraNotAvailableException;
+import com.google.ar.core.exceptions.NotYetAvailableException;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
@@ -52,17 +57,68 @@ public class FrameData {
 
     public long baseTimestamp;
 
-    //    public long frameTimestampRebased;
-//    public long cameraTimestampRebased;
-//    public long depthTimestampRebased;
-//    public long confidenceTimestampRebased;
-//
+    public float[] extrinsicMatrixHom;
+
+    public int[] textureImageDimensions;
+    public float[] texturePrincipalPoint;
+    public float[] textureFocalLength;
+
+    public int[] cameraImageDimensions;
+    public float[] cameraPrincipalPoint;
+    public float[] cameraFocalLength;
+
     public boolean isValid = false;
 //</editor-fold>
 
-    private void buildFrameData(Image cameraImage, Image depthImage, Image confidenceImage, long inFrameTimestamp) throws Exception {
+    //<editor-fold desc="FrameData constructors & build">
+    public FrameData(Image cameraImage, Image depthImage, Image confidenceImage, Camera camera, long inFrameTimestamp) throws Exception {
+        buildFrameData(cameraImage, depthImage, confidenceImage, camera, inFrameTimestamp);
+    }
+
+    public FrameData(Frame frame) throws Exception {
+
+        Image cameraImage = null, depthImage = null, confidenceImage = null;
+        long ts = frame.getTimestamp();
+        try {
+            cameraImage = frame.acquireCameraImage();
+            depthImage = frame.acquireRawDepthImage16Bits();
+            confidenceImage = frame.acquireRawDepthConfidenceImage();
+            Camera camera = frame.getCamera();
+            buildFrameData(cameraImage, depthImage, confidenceImage, camera, ts);
+        } catch (CameraNotAvailableException e) {
+            Log.e(TAG, "Camera not available during update()", e);
+            return;
+        } catch (NotYetAvailableException e) {
+            Log.e(TAG, "Depth points not yet available during acquire()", e);
+            closeImages(cameraImage, depthImage, confidenceImage);
+            return;
+        } catch (Throwable t) {
+            Log.e("onDraw", "FrameData build failed", t);
+
+        } finally {
+            if (confidenceImage != null) confidenceImage.close();
+            if (depthImage != null) depthImage.close();
+            if (cameraImage != null) cameraImage.close();
+        }
+    }
+
+    private void buildFrameData(Image cameraImage, Image depthImage, Image confidenceImage, Camera camera, long inFrameTimestamp) throws Exception {
 
         try {
+
+            CameraIntrinsics textureIntrinsics = camera.getTextureIntrinsics();
+            textureImageDimensions = textureIntrinsics.getImageDimensions();
+            texturePrincipalPoint = textureIntrinsics.getPrincipalPoint();
+            textureFocalLength = textureIntrinsics.getFocalLength();
+
+            CameraIntrinsics imageIntrinsics = camera.getImageIntrinsics();
+            cameraImageDimensions = imageIntrinsics.getImageDimensions();
+            cameraPrincipalPoint = imageIntrinsics.getPrincipalPoint();
+            cameraFocalLength = imageIntrinsics.getFocalLength();
+
+            Pose cameraPose = camera.getPose();
+            extrinsicMatrixHom = new float[16];
+            cameraPose.toMatrix(extrinsicMatrixHom, 0);
 
             Image.Plane[] camPlanes = cameraImage.getPlanes();
 
@@ -101,6 +157,7 @@ public class FrameData {
             depthTimestamp = depthImage.getTimestamp();
             confidenceTimestamp = confidenceImage.getTimestamp();
 
+
             isValid = true;
         }
         catch (Exception e) {
@@ -115,27 +172,94 @@ public class FrameData {
 
     }
 
-    public FrameData(Image cameraImage, Image depthImage, Image confidenceImage, long inFrameTimestamp) throws Exception {
-        buildFrameData(cameraImage, depthImage, confidenceImage, inFrameTimestamp);
+    private void closeImages(Image cameraImage, Image depthImage, Image confImage) {
+    if (cameraImage != null) cameraImage.close();
+    if (depthImage != null)  depthImage.close();
+    if (confImage != null)   confImage.close();
+}
+
+    //</editor-fold>
+
+    //<editor-fold desc="data format helper methods">
+
+    public float[] textureIntrinsicsToFloatArray() {
+        return intrinsicsToFloatArray(textureImageDimensions, texturePrincipalPoint, textureFocalLength);
     }
 
-    public FrameData(Frame frame) throws Exception {
+    public float[] cameraIntrinsicsToFloatArray() {
+        return intrinsicsToFloatArray(cameraImageDimensions, cameraPrincipalPoint, cameraFocalLength);
+    }
 
-        Image cameraImage = null, depthImage = null, confidenceImage = null;
-        long ts = frame.getTimestamp();
-        try {
-            cameraImage = frame.acquireCameraImage();
-            depthImage = frame.acquireRawDepthImage16Bits();
-            confidenceImage = frame.acquireRawDepthConfidenceImage();
-            buildFrameData(cameraImage, depthImage, confidenceImage, ts);
-        } finally {
-            if (confidenceImage != null) confidenceImage.close();
-            if (depthImage != null) depthImage.close();
-            if (cameraImage != null) cameraImage.close();
+    public float[] extrinsicMatrixHomToFloatArray() {
+        return extrinsicMatrixHom;
+    }
+
+    private float[] intrinsicsToFloatArray(int[] imageDimensions, float[] principalPoint, float[] focalLength) {
+
+        int total =
+                (imageDimensions == null ? 0 : imageDimensions.length) +
+                        (principalPoint  == null ? 0 : principalPoint.length) +
+                        (focalLength     == null ? 0 : focalLength.length);
+
+        float[] out = new float[total];
+        int i = 0;
+
+        if (imageDimensions != null) {
+            for (int v : imageDimensions) out[i++] = (float) v;
         }
+        if (principalPoint != null) {
+            for (float v : principalPoint) out[i++] = v;
+        }
+        if (focalLength != null) {
+            for (float v : focalLength) out[i++] = v;
+        }
+
+        return out;
     }
 
 
+    private static ByteBuffer cloneBuffer(Image.Plane plane) {
+        ByteBuffer src = plane.getBuffer();
+        ByteBuffer copy = ByteBuffer.allocateDirect(src.remaining()).order(ByteOrder.nativeOrder());
+        src.rewind();
+        copy.put(src);
+        copy.rewind();
+        return copy;
+    }
+
+    private static ShortBuffer convertDepthImageToShortBuffer(Image depth)    {
+
+        final Image.Plane depthImagePlane = depth.getPlanes()[0];
+
+        ByteBuffer depthByteBufferOriginal = depthImagePlane.getBuffer();
+        ByteBuffer depthByteBuffer = ByteBuffer.allocate(depthByteBufferOriginal.capacity());
+
+        depthByteBuffer.order(ByteOrder.LITTLE_ENDIAN);
+
+        depthByteBufferOriginal.rewind();
+        while (depthByteBufferOriginal.hasRemaining()) {
+            depthByteBuffer.put(depthByteBufferOriginal.get());
+        }
+        depthByteBuffer.rewind();
+
+        return depthByteBuffer.asShortBuffer();
+    }
+
+    private static ByteBuffer convertConfidenceImageToByteBuffer(Image confidence)  {
+        final Image.Plane confidenceImagePlane = confidence.getPlanes()[0];
+        ByteBuffer confidenceBufferOriginal = confidenceImagePlane.getBuffer();
+        ByteBuffer confidenceBuffer = ByteBuffer.allocate(confidenceBufferOriginal.capacity());
+        confidenceBuffer.order(ByteOrder.LITTLE_ENDIAN);
+        while (confidenceBufferOriginal.hasRemaining()) {
+            confidenceBuffer.put(confidenceBufferOriginal.get());
+        }
+        confidenceBuffer.rewind();
+
+        return confidenceBuffer;
+    }
+    //</editor-fold>
+
+    //<editor-fold desc="Public interface methods">
     public Bitmap getCameraBitmap() {
 
         try {
@@ -181,85 +305,48 @@ public class FrameData {
         }
     }
 
-    public Bitmap getConfidenceBitmap() {
-        final int imageWidth = 640;
-        final int imageHeight = 480;
-
-        int width = confidenceWidth;   // ARCore returns 160
-        int height = confidenceHeight; // and 90
-
-        float confidenceAspect = (float) confidenceHeight / (float) confidenceWidth;
-        float b = confidenceAspect * (float) imageWidth;
-        float c = (float) imageHeight - b;
-        final int imageHeightOffset = (int) (c / 2.0f);
-
-        // Step 1: Create greyscale bitmap from raw confidence buffer
-        Bitmap confidenceBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-        Bitmap targetBitmap = Bitmap.createBitmap(imageWidth, imageHeight, Bitmap.Config.ARGB_8888);
-
-        for (int y = 0; y < height; y++) {
-
-            int rowStart = y * confidenceRowStride;
-
-            for (int x = 0; x < width; x++) {
-
-                int imageX = x * imageWidth / confidenceWidth;
-                int imageY = (y / confidenceHeight) * (imageHeight - 2 * imageHeightOffset) + imageHeightOffset;
-
-                int offset = rowStart + x * confidencePixelStride;
-                byte confidenceValue = confidenceBuffer.get(offset);
-                float normalized = ((float) (confidenceValue & 0xFF)) / 255f;
-                int grey = Math.round(normalized * 255);
-
-                int argb = Color.argb(255, grey, grey, grey);
-
-                targetBitmap.setPixel(imageX, imageY, argb);
-            }
-        }
-
-        int sdfsdf=1;
-
-        return targetBitmap;
-    }
-
-
-    private float[] mapDepthPointsToCameraImage(float points[]) {
+    public float[] mapDepthPointsToCameraImage(float[] points) {
 
         float[] transformedPoints = null;
         if (points.length == 0) return transformedPoints;
 
-        float depthAspect = (float) depthHeight / (float) depthWidth;
-        float b = depthAspect * (float) cameraWidth;
-        float c = (float) cameraHeight - b;
+        float fx_tex = textureFocalLength[0] * depthWidth / textureImageDimensions[0];
+        float fy_tex = textureFocalLength[1] * depthHeight / textureImageDimensions[1];
+        float cx_tex = texturePrincipalPoint[0] * depthWidth / textureImageDimensions[0];
+        float cy_tex = texturePrincipalPoint[1] * depthHeight / textureImageDimensions[1];
 
-
-        final int imageHeightOffset = (int) (c / 2.0f);
+        float fx_cam = cameraFocalLength[0] * cameraWidth / cameraImageDimensions[0];
+        float fy_cam = cameraFocalLength[1] * cameraHeight / cameraImageDimensions[1];
+        float cx_cam = cameraPrincipalPoint[0] * cameraWidth / cameraImageDimensions[0];
+        float cy_cam = cameraPrincipalPoint[1] * cameraHeight / cameraImageDimensions[1];
 
         int numPoints = points.length / 4;
-
         transformedPoints = new float[points.length];
 
         for (int i = 0; i < numPoints; i++) {
-            float u = points[i*4] / depthWidth;
-            float v = points[i * 4 + 1] / depthHeight;
+            float u = points[i*4];
+            float v = points[i * 4 + 1];
 
-            float imageX = u * cameraWidth;
-            float imageY = v * (cameraHeight - 2 * imageHeightOffset) + imageHeightOffset;
+            float x_tex = (u - cx_tex) / fx_tex;
+            float y_tex = (cy_tex - v) / fy_tex;
 
-            transformedPoints[i * 4]     = imageX;
-            transformedPoints[i * 4 + 1] = imageY;
+            float u_cam = x_tex * fx_cam + cx_cam;
+            float v_cam = cy_cam - y_tex * fy_cam;
+
+            transformedPoints[i * 4]     = u_cam;
+            transformedPoints[i * 4 + 1] = v_cam;
             transformedPoints[i * 4 + 2] = points[i * 4 + 2]; // depth
             transformedPoints[i * 4 + 3] = points[i * 4 + 3]; // confidence
 
-            if (imageX < 0 || imageX >= cameraWidth || imageY < 0 || imageY >= cameraHeight) {
-                Log.i("MyDepthBounds", "Point out of bounds: " + i + ", " + imageX + ", " + imageY);
+            if (u_cam < 0 || u_cam >= cameraWidth || v_cam < 0 || v_cam >= cameraHeight) {
+                Log.i("DepthPointTransformation", "Point out of bounds: " + i + ", " + u_cam + ", " + v_cam);
             }
         }
 
         return transformedPoints;
     }
 
-    float[] getConfidencePoints() {
+    public float[] getConfidencePoints() {
 
         float[] points = null;
 
@@ -298,12 +385,12 @@ public class FrameData {
             Log.e(TAG, "Exception on the OpenGL thread", t);
         }
 
-        Log.i("MyDepth", "PointCloud size: " + points.length / 4);
+        Log.i("MyDepth", "PointCloud size: " + (points != null ? points.length : 0) / 4);
 
         return points;
     }
 
-    float[] getDepthPoints(final float confidenceLimit) {
+    public float[] getDepthPoints(final float confidenceLimit) {
 
         float[] points = null;
 
@@ -357,46 +444,8 @@ public class FrameData {
 
         return points;
     }
+    //</editor-fold>
 
-    private static ByteBuffer cloneBuffer(Image.Plane plane) {
-        ByteBuffer src = plane.getBuffer();
-        ByteBuffer copy = ByteBuffer.allocateDirect(src.remaining()).order(ByteOrder.nativeOrder());
-        src.rewind();
-        copy.put(src);
-        copy.rewind();
-        return copy;
-    }
-
-    private static ShortBuffer convertDepthImageToShortBuffer(Image depth)    {
-
-        final Image.Plane depthImagePlane = depth.getPlanes()[0];
-
-        ByteBuffer depthByteBufferOriginal = depthImagePlane.getBuffer();
-        ByteBuffer depthByteBuffer = ByteBuffer.allocate(depthByteBufferOriginal.capacity());
-
-        depthByteBuffer.order(ByteOrder.LITTLE_ENDIAN);
-
-        depthByteBufferOriginal.rewind();
-        while (depthByteBufferOriginal.hasRemaining()) {
-            depthByteBuffer.put(depthByteBufferOriginal.get());
-        }
-        depthByteBuffer.rewind();
-
-        return depthByteBuffer.asShortBuffer();
-    }
-
-    private static ByteBuffer convertConfidenceImageToByteBuffer(Image confidence)  {
-        final Image.Plane confidenceImagePlane = confidence.getPlanes()[0];
-        ByteBuffer confidenceBufferOriginal = confidenceImagePlane.getBuffer();
-        ByteBuffer confidenceBuffer = ByteBuffer.allocate(confidenceBufferOriginal.capacity());
-        confidenceBuffer.order(ByteOrder.LITTLE_ENDIAN);
-        while (confidenceBufferOriginal.hasRemaining()) {
-            confidenceBuffer.put(confidenceBufferOriginal.get());
-        }
-        confidenceBuffer.rewind();
-
-        return confidenceBuffer;
-    }
 
 
 }

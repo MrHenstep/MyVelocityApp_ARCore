@@ -4,7 +4,8 @@ import numpy as np
 import struct
 import matplotlib.pyplot as plt
 
-####################################################################################################################
+########################################################################################################################
+### extracting the time stamps and then matching depth images with camera images
 
 def read_timestamp_files(directory, batch_number):
     # Pattern to match filenames like timestamps_1.bin, timestamps_23.bin, etc.
@@ -31,7 +32,7 @@ def read_timestamp_files(directory, batch_number):
     # data_array[:, 1:] *= 3e1  # Scale the last three columns by 30
     return data_array
 
-def find_closest_rows(array, search_col, target_col, direction='both'):
+def find_closest_timestamp_matches(timestamps_table, search_col, target_col, direction='both'):
     """
     For each row, finds the index of the row in target_col whose value is closest
     to the value in the search_col of the current row.
@@ -45,8 +46,8 @@ def find_closest_rows(array, search_col, target_col, direction='both'):
     Returns:
         np.ndarray: Nx2 array of [original_index, matched_index] for each row.
     """
-    search_values = array[:, search_col]
-    target_values = array[:, target_col]
+    search_values = timestamps_table[:, search_col]
+    target_values = timestamps_table[:, target_col]
 
     match_indices = []
 
@@ -91,10 +92,22 @@ def print_closest_ts_match(timestamps_array, match_indices):
     # diffs = timestamps_array[match_indices[:, 1], 4] - timestamps_array[match_indices[:, 0], 3]
     # print(f"Confidence: Mean: {np.mean(diffs):.6f}, Std: {np.std(diffs):.6f}, Min: {np.min(diffs):.6f}, Max: {np.max(diffs):.6f}")
 
+def get_all_indices(directory, batch_number):
+    pattern = re.compile(rf"batch_{batch_number}_depth_points_(\d+)\.bin")
+    indices = []
+    for filename in os.listdir(directory):
+        match = pattern.match(filename)
+        if match:
+            idx = int(match.group(1))
+            indices.append(idx)
+    indices.sort()
+    match_indices = np.column_stack((indices, indices))
+    return match_indices
+
 def get_matched_filenames(match_indices, directory, batch_number):
 
 
-    collated_table = []
+    filename_table = []
     # directory = "../exported"
 
     for idx_pair in match_indices:
@@ -118,9 +131,13 @@ def get_matched_filenames(match_indices, directory, batch_number):
         depth_map_colour_exists = depth_map_colour_file if os.path.exists(depth_map_colour_path) else "n/a"
         depth_map_grey_exists = depth_map_grey_file if os.path.exists(depth_map_grey_path) else "n/a"
 
-        collated_table.append([depth_points_exists, depth_map_camera_exists, depth_map_colour_exists, depth_map_grey_exists, confidence_points_exists])
+        filename_table.append([depth_points_exists, depth_map_camera_exists, depth_map_colour_exists, depth_map_grey_exists, confidence_points_exists])
 
-    return collated_table
+    return filename_table
+
+    
+#######################################################################################################################
+### extracting the data from the files 
 
 
 def get_depth_points_data(file_path, file_name, confidence_level):
@@ -229,7 +246,94 @@ def get_depth_map_bitmap(data, overlay_points=None, depth_range=(0.0, 5.0), colo
     depth_map_bitmap = (rgb_img * 255).astype(np.uint8)
     return depth_map_bitmap
 
-def display_collated_data(collated_table, confidence_level, timestamps_array=None, match_indices=None, depth_points_indices=None, depth_range=(0.0, 5.0)):
+def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range):
+
+    depth_points_bitmap = None
+    depth_map_camera_bitmap = None
+    depth_map_colour_bitmap = None
+    confidence_points_bitmap = None
+
+    overlay_points = None
+
+
+    # DEPTH POINTS
+    if row[0] != "n/a":
+        points = get_depth_points_data(file_path, row[0], confidence_level)
+        depth_points_bitmap = get_depth_map_bitmap(data=None, overlay_points=points, depth_range=depth_range)
+    else:
+        depth_points_bitmap = get_depth_map_bitmap(data=None, overlay_points=None)
+
+    # CAMERA IMAGE
+    if row[1] != "n/a":
+        points = get_depth_points_data(file_path, row[0], confidence_level)
+        depth_map_camera = get_depth_map_data(file_path, row[1])
+        depth_map_camera_bitmap = get_depth_map_bitmap(depth_map_camera, overlay_points=points, depth_range=depth_range)
+    else:
+        depth_map_camera_bitmap = get_depth_map_bitmap(None)
+
+    # DEPTH MAP
+    if row[2] != "n/a":
+        depth_map = get_depth_map_data(file_path, row[3])
+        depth_map_colour_bitmap = get_depth_map_bitmap(depth_map, overlay_points, depth_range=depth_range)
+    else:
+        depth_map_colour_bitmap = get_depth_map_bitmap(None)
+
+    # CONFIDENCE POINTS
+    if row[4] != "n/a":
+        confidence_points = get_depth_points_data(file_path, row[4], confidence_level)
+        confidence_points_bitmap = get_depth_map_bitmap(data=None, depth_range=(0.0, 1.0), overlay_points=confidence_points, colour_map='Greys')
+        overlay_points = confidence_points
+    else:
+        confidence_points_bitmap = get_depth_map_bitmap(data=None, overlay_points=None)
+
+    return depth_points_bitmap, depth_map_camera_bitmap, depth_map_colour_bitmap, confidence_points_bitmap
+
+def get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, confidence_level):
+
+    points = get_depth_points_data(file_path, depth_points_file, confidence_level)
+
+    num_points = points.shape[0]
+
+    combined_data_points = np.zeros((num_points, 5), dtype=np.float32)
+
+    combined_data_points[:,:2] = points[:,:2]  # x, y
+    combined_data_points[:, 2] = points[:, 2]   # depth
+    combined_data_points[:, 3] = points[:, 3]  # confidence
+
+    depth_map_data = get_depth_map_data(file_path, depth_map_file)
+
+    for i_point in range(num_points):
+        y, x = combined_data_points[i_point, :2]
+        xi, yi = int(x), int(y)
+        # width=640
+        height=480
+        index = xi + yi * height
+        # print(i_point, (xi, yi, depth_map_data[index, 3]))
+        # if 0 <= xi < depth_map_data.shape[0] and 0 <= yi < depth_map_data.shape[1]:
+        combined_data_points[i_point, 4] = depth_map_data[index, 3]
+
+    return combined_data_points
+
+
+#######################################################################################################################
+### display & visualisation
+
+def plot_points_and_images(depth_points_bitmap, depth_map_camera_bitmap, depth_map_colour_bitmap, confidence_points_bitmap):
+
+    # Display the two bitmaps side by side
+    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+    axes[0].imshow(depth_points_bitmap)
+    axes[0].set_title('Depth Points Bitmap')
+    axes[1].imshow(depth_map_camera_bitmap)
+    axes[1].set_title('Depth Map Camera Bitmap')
+    axes[2].imshow(depth_map_colour_bitmap)
+    axes[2].set_title('Depth Map Colour Bitmap')
+    axes[3].imshow(confidence_points_bitmap)
+    axes[3].set_title('Confidence Points Bitmap')
+    plt.tight_layout()
+    plt.show()
+
+def batch_display_points_and_images(file_path, collated_table, confidence_level, timestamps_array=None, match_indices=None, depth_points_indices=None, depth_range=(0.0, 5.0)):
 
     for i_row, row in enumerate(collated_table):
 
@@ -242,104 +346,19 @@ def display_collated_data(collated_table, confidence_level, timestamps_array=Non
         if (depth_points_index not in depth_points_indices):
             continue
 
-        print(row)
         indices = match_indices[i_row]
 
-        print(f"ABS: Row {i_row}: Frame ts {timestamps_array[indices[1], 1]:.6f}, Camera ts {timestamps_array[indices[1], 2]:.6f}, Depth ts {timestamps_array[indices[0], 3]:.6f}, Confidence ts {timestamps_array[indices[1], 4]:.6f}")
+        depth_points_bitmap, depth_map_camera_bitmap, depth_map_grey_bitmap, confidence_points_bitmap = get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range)
 
+        plot_points_and_images(depth_points_bitmap, depth_map_camera_bitmap, depth_map_grey_bitmap, confidence_points_bitmap)
+
+        print(row)
+        print(f"ABS: Row {i_row}: Frame ts {timestamps_array[indices[1], 1]:.6f}, Camera ts {timestamps_array[indices[1], 2]:.6f}, Depth ts {timestamps_array[indices[0], 3]:.6f}, Confidence ts {timestamps_array[indices[1], 4]:.6f}")
         print(f"DEL: Row {i_row}: Frame ts {timestamps_array[indices[1], 1]-timestamps_array[indices[0], 3]:.6f}, Camera ts {timestamps_array[indices[1], 2]-timestamps_array[indices[0], 3]:.6f}, Depth ts n/a, Confidence ts {timestamps_array[indices[1], 4]-timestamps_array[indices[0], 3]:.6f}")
 
-        overlay_points = None
 
-        
-        # DEPTH POINTS
-        if row[0] != "n/a":
-            points = get_depth_points_data(file_path, row[0], confidence_level)
-            depth_points_bitmap = get_depth_map_bitmap(data=None, overlay_points=points, depth_range=depth_range)
-            overlay_points = points
-        else:
-            depth_points_bitmap = get_depth_map_bitmap(data=None, overlay_points=None)
+def plot_histograms_and_regression(combined_data_points, depth_range, regression_points = None):
 
-        # CAMERA IMAGE
-        if row[1] != "n/a":
-            depth_map_camera = get_depth_map_data(file_path, row[1])
-            depth_map_camera_bitmap = get_depth_map_bitmap(depth_map_camera, overlay_points, depth_range=depth_range)
-        else:
-            depth_map_camera_bitmap = get_depth_map_bitmap(None)
-
-        # DEPTH MAP
-        if row[2] != "n/a":
-            depth_map = get_depth_map_data(file_path, row[3])
-            depth_map_colour_bitmap = get_depth_map_bitmap(depth_map, overlay_points, depth_range=depth_range)
-        else:
-            depth_map_colour_bitmap = get_depth_map_bitmap(None)
-
-        # CONFIDENCE POINTS
-        if row[4] != "n/a":
-            confidence_points = get_depth_points_data(file_path, row[4], confidence_level)
-            confidence_points_bitmap = get_depth_map_bitmap(data=None, depth_range=(0.0, 1.0), overlay_points=confidence_points, colour_map='Greys')
-            overlay_points = confidence_points
-        else:
-            confidence_points_bitmap = get_depth_map_bitmap(data=None, overlay_points=None)
-
-        # Display the two bitmaps side by side
-        fig, axes = plt.subplots(1, 4, figsize=(20, 5))
-        axes[0].imshow(depth_points_bitmap)
-        axes[0].set_title('Depth Points Bitmap')
-        axes[1].imshow(depth_map_camera_bitmap)
-        axes[1].set_title('Depth Map Camera Bitmap')
-        axes[2].imshow(depth_map_colour_bitmap)
-        axes[2].set_title('Depth Map Colour Bitmap')
-        axes[3].imshow(confidence_points_bitmap)
-        axes[3].set_title('Confidence Points Bitmap')
-        plt.tight_layout()
-        plt.show()
-
-def histograms_and_regression(file_path, matched_filename_table, depth_points_indices, confidence_level, depth_range=(0.0, 5.0)):
-
-    for i, row in enumerate(matched_filename_table):
-        
-        depth_points_file = row[0]
-        depth_map_file = row[3]
-
-
-        depth_points_file = row[0]
-        if depth_points_file == "n/a":
-            continue
-        
-        depth_points_index = int(depth_points_file.split("_")[-1].split(".")[0])
-
-        if (depth_points_index not in depth_points_indices):
-            continue
-
-
-        # print(depth_map_file)
-        print(row)
-
-        # combined data points: x, y, dpeth, confidence, depth map value
-
-        points = get_depth_points_data(file_path, depth_points_file, confidence_level)
-
-        num_points = points.shape[0]
-
-        combined_data_points = np.zeros((num_points, 5), dtype=np.float32)
-
-        combined_data_points[:,:2] = points[:,:2]  # x, y
-        combined_data_points[:, 2] = points[:, 2]   # depth
-        combined_data_points[:, 3] = points[:, 3]  # confidence
-
-        depth_map_data = get_depth_map_data(file_path, depth_map_file)
-
-        for i_point in range(num_points):
-            y, x = combined_data_points[i_point, :2]
-            xi, yi = int(x), int(y)
-            width=640
-            height=480
-            index = xi + yi * height
-            # print(i_point, (xi, yi, depth_map_data[index, 3]))
-            # if 0 <= xi < depth_map_data.shape[0] and 0 <= yi < depth_map_data.shape[1]:
-            combined_data_points[i_point, 4] = depth_map_data[index, 3]
-            
         fig, axes = plt.subplots(1, 3, figsize=(24, 6))
 
         depth_min = depth_range[0]
@@ -367,7 +386,17 @@ def histograms_and_regression(file_path, matched_filename_table, depth_points_in
         axes[1].grid(True)
 
         # Scatter plot: Depth vs Depth Map Value
-        axes[2].scatter(combined_data_points[:, 2], combined_data_points[:, 4], alpha=0.5)
+        # Use combined_data_points[:, 3] (confidence) as weights for point size
+        # Normalize weights to a reasonable range, e.g., [2, 50]
+        weights = combined_data_points[:, 3]
+        min_size, max_size = 2, 50
+        norm_weights = (weights - weights.min()) / (weights.ptp() + 1e-8)
+        sizes = min_size + norm_weights * (max_size - min_size)
+
+        if regression_points is not None:
+            axes[2].plot(regression_points[:, 0], regression_points[:, 1], linestyle='--', color='blue', alpha=0.7, linewidth=2, label='Regression')
+            axes[2].legend()
+        axes[2].scatter(combined_data_points[:, 2], combined_data_points[:, 4], alpha=0.5, s=sizes)
         axes[2].set_xlim(depth_min, depth_max)
         axes[2].set_ylim(depth_map_min, depth_map_max)
         axes[2].set_xlabel('Depth')
@@ -378,34 +407,71 @@ def histograms_and_regression(file_path, matched_filename_table, depth_points_in
         plt.tight_layout()
         plt.show()
 
+def batch_display_histograms_and_regression(file_path, matched_filename_table, depth_points_indices, confidence_level, depth_range=(0.0, 5.0)):
+
+    for _, row in enumerate(matched_filename_table):
+        
+        depth_points_file = row[0]
+        depth_map_file = row[3]
+
+        # do nothing if the depth points file is not available
+        if depth_points_file == "n/a":
+            continue
+
+        # make sure the depth points index is in the list of ones to do (enables us to skip some)
+        depth_points_index = int(depth_points_file.split("_")[-1].split(".")[0])
+        if (depth_points_index not in depth_points_indices):
+            continue
+
+        print(row)
+
+        # combined data points: x, y, dpeth, confidence, depth map value
+        combined_data_points = get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, confidence_level)
+
+        plot_histograms_and_regression(combined_data_points, depth_range)
+
+
 ####################################################################################################################
 
-cwd = os.getcwd()
-print(cwd)
 
-file_path = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported"
+if (__name__ == "__main__"):
 
-# file_path = cwd + "\\..\\exported"
-# file_path = "./exported"
+    ##########################################################################################################
 
-batch_number = 0
-confidence_level = 0.75
-depth_range = (0.0, 25.0)
+    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250812_1_(frametiming)(indoors)(motion)"
+    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250812_2_(frametiming)(outdoors)(motion)"
+    FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250813_1_(5fps)(outside)"
 
 
-timestamps_table = read_timestamp_files(file_path, batch_number)
-nearest_match_indices = find_closest_rows(timestamps_table, 3, 2, direction='both')
+    ##################################################################################################################
 
-print_closest_ts_match(timestamps_table, nearest_match_indices)
-matched_filename_table = get_matched_filenames(nearest_match_indices, file_path, batch_number)
+    BATCH_NUMBER = 0
+    CONFIDENCE_LEVEL = 0.75
+    DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, 25.0)
 
+    DEPTH_POINTS_INDICES = range(0, 10, 1)
 
-depth_points_indices = range(0, len(timestamps_table))
-depth_points_indices = range(0, 60, 10)
+    MATCH_TIMESTAMPS = False
 
-display_collated_data(matched_filename_table, confidence_level, timestamps_table, nearest_match_indices, depth_points_indices, depth_range=depth_range)
+    # Apply a sigmoid weight dropping towards zero above 7, width 1
+    X_CUT = 7.0
+    X_WIDTH = 1.0
+    WEIGHTS_SIGMOID = (X_CUT, X_WIDTH)
 
-histograms_and_regression(file_path, matched_filename_table, depth_points_indices, confidence_level, depth_range=depth_range)
+    ##################################################################################################################
+    TIMESTAMPS_TABLE = read_timestamp_files(FILE_PATH, BATCH_NUMBER)
+
+    if MATCH_TIMESTAMPS:
+        MATCHED_INDICES = find_closest_timestamp_matches(TIMESTAMPS_TABLE, 3, 2, direction='both')
+    else:
+        MATCHED_INDICES = get_all_indices(FILE_PATH, BATCH_NUMBER)
+
+    print_closest_ts_match(TIMESTAMPS_TABLE, MATCHED_INDICES)
+    FILENAME_TABLE = get_matched_filenames(MATCHED_INDICES, FILE_PATH, BATCH_NUMBER)
+
+    batch_display_points_and_images(FILE_PATH, FILENAME_TABLE, CONFIDENCE_LEVEL, TIMESTAMPS_TABLE, MATCHED_INDICES, DEPTH_POINTS_INDICES, depth_range=DEPTH_RANGE_FOR_COLOUR_MAP)
+
+    batch_display_histograms_and_regression(FILE_PATH, FILENAME_TABLE, DEPTH_POINTS_INDICES, CONFIDENCE_LEVEL, depth_range=DEPTH_RANGE_FOR_COLOUR_MAP)
 
 
 ####################################################################################################################

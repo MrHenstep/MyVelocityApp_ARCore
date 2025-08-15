@@ -1,0 +1,38 @@
+import lib_extraction_and_visualisation as exv
+
+##########################################################################################################
+
+# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250812_1_(frametiming)(indoors)(motion)"
+# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250812_2_(frametiming)(outdoors)(motion)"
+# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250813_1_(5fps)(outside)"
+FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported"
+
+##################################################################################################################
+
+BATCH_NUMBER = 0
+CONFIDENCE_LEVEL = 0.75
+DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, 5.0)
+
+DEPTH_POINTS_INDICES = range(0, 10, 1)
+
+MATCH_TIMESTAMPS = False
+
+# Apply a sigmoid weight dropping towards zero above 7, width 1
+X_CUT = 7.0
+X_WIDTH = 1.0
+WEIGHTS_SIGMOID = (X_CUT, X_WIDTH)
+
+##################################################################################################################
+
+TIMESTAMPS_TABLE = exv.read_timestamp_files(FILE_PATH, BATCH_NUMBER)
+
+if MATCH_TIMESTAMPS:
+    MATCHED_INDICES = exv.find_closest_timestamp_matches(TIMESTAMPS_TABLE, 3, 2, direction='both')
+else:
+    MATCHED_INDICES = exv.get_all_indices(FILE_PATH, BATCH_NUMBER)
+
+exv.print_closest_ts_match(TIMESTAMPS_TABLE, MATCHED_INDICES)
+
+MATCHED_FILENAME_TABLE = exv.get_matched_filenames(MATCHED_INDICES, FILE_PATH, BATCH_NUMBER)
+
+exv.batch_display_histograms_and_regression(FILE_PATH, MATCHED_FILENAME_TABLE, DEPTH_POINTS_INDICES, CONFIDENCE_LEVEL, depth_range=DEPTH_RANGE_FOR_COLOUR_MAP)

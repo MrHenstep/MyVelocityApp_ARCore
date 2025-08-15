@@ -19,17 +19,12 @@ package com.google.ar.core.codelab.rawdepth;
 import android.content.res.AssetFileDescriptor;
 
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 
-import android.graphics.ImageFormat;
 import android.graphics.Matrix;
 
 import android.graphics.Paint;
-import android.graphics.Rect;
-import android.graphics.YuvImage;
-import android.media.Image;
 
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
@@ -70,14 +65,12 @@ import com.google.ar.core.codelab.common.rendering.BackgroundRenderer;
 
 
 import com.google.ar.core.exceptions.CameraNotAvailableException;
-import com.google.ar.core.exceptions.NotYetAvailableException;
 import com.google.ar.core.exceptions.UnavailableApkTooOldException;
 import com.google.ar.core.exceptions.UnavailableArcoreNotInstalledException;
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException;
 import com.google.ar.core.exceptions.UnavailableSdkTooOldException;
 import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationException;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -92,12 +85,10 @@ import org.tensorflow.lite.Interpreter;
 
 import java.io.FileInputStream;
 import java.nio.MappedByteBuffer;
-import java.nio.ShortBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -137,25 +128,25 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
   private int numFramesTaken = 0;
 
   // Constants determining collection
-  private static final int FRAME_THROTTLE_INTERVAL = 1;
-  private static final int MAX_COLLECTED_FRAMES = 60;
+  private static final int FRAME_THROTTLE_INTERVAL = 6;
+  private static final int MAX_COLLECTED_FRAMES = 20;
 
 
   private Button continueButton;
-  private final Object continueLock = new Object();
-  private boolean continuePressed = false;
+//  private final Object continueLock = new Object();
+//  private boolean continuePressed = false;
 
   private long baseTimestamp;
 
   private volatile Bitmap lastPreviewBitmap = null;
 
-  private boolean showLiveDepthPoints = true; // draw depth points even when not collecting
+//  private boolean showLiveDepthPoints = true; // draw depth points even when not collecting
 
   private final AtomicBoolean previewBusy = new AtomicBoolean(false);
 
 
   // Cached collection of frames
-  private final List<FrameData> collectedFrames = Collections.synchronizedList(new ArrayList<>());
+  private final List<FrameData> collectedFramesContainer = Collections.synchronizedList(new ArrayList<>());
 
   private volatile boolean collectingFrames = false;
 
@@ -417,63 +408,29 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 
     displayRotationHelper.updateSessionIfNeeded(session);
     session.setCameraTextureName(backgroundRenderer.getTextureId());
-
-    // keep pointers to the images and frame so we can wrap the acquires in a try-catch
-    Frame frame = null;
-    Image cameraImage = null, depthImage = null, confImage = null;
-
-    // try to acquire the frame and images
-    try {
-      frame = session.update();
-      cameraImage = frame.acquireCameraImage();
-      depthImage = frame.acquireRawDepthImage16Bits();
-      confImage = frame.acquireRawDepthConfidenceImage();
-    } catch (CameraNotAvailableException e) {
-      Log.e(TAG, "Camera not available during update()", e);
-      closeImages(cameraImage, depthImage, confImage);
-      return;
-    } catch (NotYetAvailableException e) {
-      Log.e(TAG, "Depth points not yet available during acquire()", e);
-      closeImages(cameraImage, depthImage, confImage);
-      return;
-    }
-
-    // check the phone rotation
     int displayRotation = getWindowManager().getDefaultDisplay().getRotation();
     int rotationDegrees = getCameraImageRotationDegrees(this, displayRotation);
 
+    // ********************************************************************************
+    // *** Get the Frame, and build the FrameData                                   ***
+    // ********************************************************************************
+
+    Frame frame = null;
     FrameData frameData = null;
+
     try {
-      frameData = new FrameData(cameraImage, depthImage, confImage, frame.getTimestamp());
-    } catch (Throwable t) {
+      frame = session.update();
+      frameData = new FrameData(frame);
+    }
+    catch (Throwable t) {
       Log.e("onDraw", "FrameData build failed", t);
-    } finally {
-      // Prevent any later paths from trying to close them again.
-      cameraImage = null;
-      depthImage  = null;
-      confImage   = null;
     }
 
-    // draw preview and points using the Images we acquired
-//    renderCameraAndPoints(cameraImage, depthImage, confImage, rotationDegrees);
-//    renderCameraAndPointsFrameFrameData(frameData, rotationDegrees);
+    displayPreview(frameData, rotationDegrees);
 
-    final FrameData fdForPreview = frameData;
-    final int rot = rotationDegrees;
-    if (fdForPreview != null && fdForPreview.isValid) {
-      // Only queue one preview job at a time; drop stale frames.
-      if (previewBusy.compareAndSet(false, true)) {
-        previewExecutor.execute(() -> {
-          try {
-            // Optional: while heavy processing runs, you can skip expensive overlay to keep preview snappy
-            // boolean showOverlay = showLiveDepthPoints && !processingFrames.get();
-            renderCameraAndPointsFrameFrameData(fdForPreview, rot);
-          } finally {
-            previewBusy.set(false);
-          }
-        });
-      }
-    }
+    // ********************************************************************************
+    // *** Check for break conditions, e.g. if we're not collecting, or are done    ***
+    // ********************************************************************************
 
     // if we're not collecting frames, close the images safely and return
     if (!collectingFrames) {return; }
@@ -482,13 +439,12 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     numFramesTaken++;
     if (numFramesTaken % FRAME_THROTTLE_INTERVAL != 0) {return; }
 
-    //
+    // *************************************************************************************
+    // *** Process the frame - store it, and if we're done, set of the processing thread ***
+    // *************************************************************************************
+
     try {
 
-      // Create the FrameData object from the Images
-//      FrameData frameData = new FrameData(cameraImage, depthImage, confImage, frame.getTimestamp());
-
-      // if the FrameData is valid,  proceed ...
       if (frameData != null && frameData.isValid) {
 
         numFramesCollected++;
@@ -497,15 +453,15 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
         frameData.baseTimestamp = baseTimestamp;
 
         // synchronise this section
-        synchronized (collectedFrames) {
+        synchronized (collectedFramesContainer) {
 
           // store the new frameData
-          collectedFrames.add(frameData);
+          collectedFramesContainer.add(frameData);
 
-          // if we've collected the whole batch, process
-          if (collectedFrames.size() >= MAX_COLLECTED_FRAMES) {
+          // if we've collected the whole batch, set off the processing thread
+          if (collectedFramesContainer.size() >= MAX_COLLECTED_FRAMES) {
 
-            Log.i("CollectFrames", collectedFrames.size() + " Frames Collected");
+            Log.i("CollectFrames", collectedFramesContainer.size() + " Frames Collected");
 
             final int thisBatch = batchCounter - 1;
 
@@ -521,15 +477,19 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
             collectingFrames = false;
             processingFrames.set(true);
 
-            List<FrameData> snapshot = new ArrayList<>(collectedFrames);
-            collectedFrames.clear();
+            // copy the collected frames into a list and clear the list
+            // this is so that the processing, which is about to execute on a different thread,
+            // can work on it while the GL thread carries on displaying previews
+            // (just in case onDrawFrame is ever changed to collect while processing)
+            List<FrameData> snapshot = new ArrayList<>(collectedFramesContainer);
+            collectedFramesContainer.clear();
 
             // run the number-crunching on an executor so we don't block either the GL or the UI thread
             analysisExecutor.execute(() -> {
               try {
                 // loop through all the collected frames
                 for (int iFrame = 0; iFrame < snapshot.size(); ++iFrame) {
-                  runDepthEstimationCached(snapshot.get(iFrame), iFrame, thisBatch);
+                  runDepthEstimation(snapshot.get(iFrame), iFrame, thisBatch);
                 }
               } finally {
                 processingFrames.set(false);
@@ -555,15 +515,24 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
   }
 // </editor-fold>
 
-  private void closeImages(Image cameraImage, Image depthImage, Image confImage) {
-    if (cameraImage != null) cameraImage.close();
-    if (depthImage != null)  depthImage.close();
-    if (confImage != null)   confImage.close();
+// <editor-fold desc="display previews etc."
+
+  private void displayPreview(FrameData frameData, int rotationDegrees) {
+    if (frameData != null && frameData.isValid) {
+      // Only queue one preview job at a time; drop stale frames.
+      if (previewBusy.compareAndSet(false, true)) {
+        previewExecutor.execute(() -> {
+          try {
+            renderCameraAndPointsFromFrameData(frameData, rotationDegrees);
+          } finally {
+            previewBusy.set(false);
+          }
+        });
+      }
+    }
   }
 
-  private void renderCameraAndPointsFrameFrameData(
-          FrameData frameData,
-          int rotationDegrees) {
+  private void renderCameraAndPointsFromFrameData(FrameData frameData, int rotationDegrees) {
 
     if (!frameData.isValid) {
       // Nothing new this frame; if we have a previous preview, keep showing it.
@@ -594,20 +563,23 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 
     // 2) Optional depth points overlay
     Bitmap composed = preview;
-    if (showLiveDepthPoints && frameData.isValid) {
+    if (frameData.isValid) {
       try {
         // Build points in depth space
 //        float[] pts = getDepthPoints(depthImage, confImage, /*confidenceLimit=*/0.5f);
-        float[] pts = frameData.getDepthPoints(0.5f);
-        if (pts != null && pts.length >= 4) {
-          int depthW = frameData.depthWidth;
-          int depthH = frameData.depthHeight;
+
+        float[] pointsToMap = frameData.getDepthPoints(0.5f);
+
+        if (pointsToMap != null && pointsToMap.length >= 4) {
+//          int depthW = frameData.depthWidth;
+//          int depthH = frameData.depthHeight;
 
           // Map into *pre-rotation* camera space
-          float[] mapped = mapDepthPointsToCameraImage(pts, camW, camH, depthW, depthH);
+//          float[] mapped = mapDepthPointsToCameraImage(pointsToMap, camW, camH, depthW, depthH);
+          float[] mappedPoints = frameData.mapDepthPointsToCameraImage(pointsToMap);
 
           // Make overlay in pre-rotation space, then rotate it to match preview
-          Bitmap overlay = drawPointsOverlay(mapped, camW, camH);
+          Bitmap overlay = drawPointsOverlay(mappedPoints, camW, camH);
           overlay = rotateBitmap(overlay, rotationDegrees);
 
           // Composite overlay onto preview
@@ -626,284 +598,16 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     runOnUiThread(() -> displayBitmapWithAspectRatio(finalBmp));
   }
 
+  public void displayBitmapWithAspectRatio(Bitmap bitmap) {
 
-  private void renderCameraAndPoints(
-          Image cameraImage,
-          Image depthImage,
-          Image confImage,
-          int rotationDegrees) {
+    if (bitmap == null || bitmapView == null) return;
 
-    if (cameraImage == null) {
-      // Nothing new this frame; if we have a previous preview, keep showing it.
-      if (lastPreviewBitmap != null) {
-        Bitmap finalBmp = lastPreviewBitmap;
-        runOnUiThread(() -> displayBitmapWithAspectRatio(finalBmp));
-      }
-      return;
-    }
-
-    // 1) Camera preview (pre-rotation width/height)
-    final int camW = cameraImage.getWidth();
-    final int camH = cameraImage.getHeight();
-
-    Bitmap preview = imageToBitmap(cameraImage);
-    if (preview == null) {
-      if (lastPreviewBitmap != null) {
-        Bitmap finalBmp = lastPreviewBitmap;
-        runOnUiThread(() -> displayBitmapWithAspectRatio(finalBmp));
-      }
-      return;
-    }
-
-    // Rotate preview into display orientation and remember it
-    preview = rotateBitmap(preview, rotationDegrees);
-    lastPreviewBitmap = preview;
-
-    // 2) Optional depth points overlay
-    Bitmap composed = preview;
-    if (showLiveDepthPoints && depthImage != null && confImage != null) {
-      try {
-        // Build points in depth space
-        float[] pts = getDepthPoints(depthImage, confImage, /*confidenceLimit=*/0.5f);
-        if (pts != null && pts.length >= 4) {
-          int depthW = depthImage.getWidth();
-          int depthH = depthImage.getHeight();
-
-          // Map into *pre-rotation* camera space
-          float[] mapped = mapDepthPointsToCameraImage(pts, camW, camH, depthW, depthH);
-
-          // Make overlay in pre-rotation space, then rotate it to match preview
-          Bitmap overlay = drawPointsOverlay(mapped, camW, camH);
-          overlay = rotateBitmap(overlay, rotationDegrees);
-
-          // Composite overlay onto preview
-          composed = preview.copy(Bitmap.Config.ARGB_8888, true);
-          Canvas c = new Canvas(composed);
-          c.drawBitmap(overlay, 0, 0, null);
-        }
-      } catch (Throwable t) {
-        // If anything goes wrong, just show the preview without overlay
-        Log.w(TAG, "Live depth overlay failed; showing preview only.", t);
-      }
-    }
-
-    // 3) Push to UI
-    Bitmap finalBmp = composed;
-    runOnUiThread(() -> displayBitmapWithAspectRatio(finalBmp));
+    bitmapView.setAdjustViewBounds(true);
+    bitmapView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+    bitmapView.setAlpha(1.0f);
+    bitmapView.setVisibility(View.VISIBLE);
+    bitmapView.setImageBitmap(bitmap);
   }
-
-// <editor-fold desc="Main runDepthEstimation method">
-  private void runDepthEstimationCached(FrameData frameData, int frameNumber, int batchNumber) {
-
-  try  {
-
-    int displayRotation = getWindowManager().getDefaultDisplay().getRotation();
-    int rotationDegrees = getCameraImageRotationDegrees(this, displayRotation);
-
-    Bitmap cameraBitmap = frameData.getCameraBitmap();
-    cameraBitmap = rotateBitmap(cameraBitmap, rotationDegrees);
-    Bitmap depthModelInputBitmap = Bitmap.createScaledBitmap(cameraBitmap, 256, 256, true);
-
-    // get the raw depth image, extract the depth points, and transform it to camera image space
-    // and then close the images
-    float[] points4d = frameData.getDepthPoints(0.5f);
-    float[] transformedPoints4d = null;
-    if (points4d != null) transformedPoints4d = mapDepthPointsToCameraImage(points4d, frameData.cameraWidth, frameData.cameraHeight, frameData.depthWidth, frameData.depthHeight);
-
-    float[] confidencePoints4d = frameData.getConfidencePoints();
-    float[] transformedConfidencePoints4d = null;
-    if (confidencePoints4d != null) transformedConfidencePoints4d = mapDepthPointsToCameraImage(confidencePoints4d, frameData.cameraWidth, frameData.cameraHeight, frameData.depthWidth, frameData.depthHeight);
-
-    ByteBuffer inputBuffer = bitmapToByteBuffer(depthModelInputBitmap);           // convert bitmap to input buffer and create empty output buffer to write to
-      float[][][][] outputBuffer = new float[1][256][256][1];
-      tflite_interpreter.run(inputBuffer, outputBuffer);  // run MIDAS
-
-      ColourMapResult colourMapResult = createColorMappedBitmap(outputBuffer, 256, 256); // create coloured bitmap from Midas output buffer
-
-      Bitmap depthModelBitmapColour = Bitmap.createScaledBitmap(colourMapResult.colourBitmap, 480, 640, true);
-      Bitmap depthModelBitmapGrey = Bitmap.createScaledBitmap(colourMapResult.greyscaleBitmap, 480, 640, true);
-
-    // display the depth map as a transparent overlay over the camera image
-    Bitmap combinedBitmap = cameraBitmap.copy(Bitmap.Config.ARGB_8888, true);
-    Canvas canvas = new Canvas(combinedBitmap);
-
-      Paint transparentPaint = new Paint();
-      transparentPaint.setAlpha(128); // or tune as needed (0=transparent, 255=opaque)
-      canvas.drawBitmap(depthModelBitmapColour, 0, 0, transparentPaint);
-
-    // draw the depth points over the camera and depth map images
-    if (transformedPoints4d != null) {
-      Bitmap depthPointsImage = drawPointsOverlay(transformedPoints4d, frameData.cameraWidth, frameData.cameraHeight);
-      depthPointsImage = rotateBitmap(depthPointsImage, rotationDegrees);
-      canvas.drawBitmap(depthPointsImage, 0, 0, null);
-    }
-
-//    displayBitmapWithAspectRatio(combinedBitmap);
-
-//    if (numFramesTaken <= 10) {
-
-
-      // TIMESTAMPS
-      float[] timeStamps = new float[] {
-              frameData.frameTimestamp - frameData.baseTimestamp,
-              frameData.cameraTimestamp - frameData.baseTimestamp,
-              frameData.depthTimestamp - frameData.baseTimestamp,
-              frameData.confidenceTimestamp - frameData.baseTimestamp
-      };
-      saveFloatArrayToBinary(timeStamps, String.format("batch_%d_timestamps_%d.bin", batchNumber, frameNumber));
-      Log.i("CollectFrames", String.format("Saved timestamps for batch %d, frame %d", batchNumber, frameNumber));
-
-      // DEPTH POINTS
-      if (transformedPoints4d != null) {
-        saveFloatArrayToBinary(transformedPoints4d, String.format("batch_%d_depth_points_%d.bin", batchNumber, frameNumber));
-        Log.i("CollectFrames", String.format("Saved depth points for batch %d, frame %d", batchNumber, frameNumber));
-      }
-
-      // CAMERA IMAGE
-      float[] cameraBitmapFloatArray = convertBitmapToFloatPointsArray(cameraBitmap);
-      saveFloatArrayToBinary(cameraBitmapFloatArray, String.format("batch_%d_depth_map_camera_%d.bin", batchNumber, frameNumber));
-      Log.i("CollectFrames", String.format("Saved depth map camera for batch %d, frame %d", batchNumber, frameNumber));
-
-      // COLOUR DEPTH MAP
-      float[] colourBitmapFloatArray = convertBitmapToFloatPointsArray(depthModelBitmapColour);
-      saveFloatArrayToBinary(colourBitmapFloatArray, String.format("batch_%d_depth_map_colour_%d.bin", batchNumber, frameNumber));
-      Log.i("CollectFrames", String.format("Saved depth map colour for batch %d, frame %d", batchNumber, frameNumber));
-
-      // GREYSCALE DEPTH MAP based on reciprocal depth
-      float[] greyBitmapFloatArray = convertBitmapToFloatPointsArray(depthModelBitmapGrey);
-      saveFloatArrayToBinary(greyBitmapFloatArray, String.format("batch_%d_depth_map_grey_%d.bin", batchNumber, frameNumber));
-      Log.i("CollectFrames", String.format("Saved depth map grey for batch %d, frame %d", batchNumber, frameNumber));
-
-      // CONFIDENCE POINTS
-      if (transformedConfidencePoints4d != null) {
-        saveFloatArrayToBinary(transformedConfidencePoints4d, String.format("batch_%d_confidence_points_%d.bin", batchNumber, frameNumber));
-        Log.i("CollectFrames", String.format("Saved confidence points for batch %d, frame %d", batchNumber, frameNumber));
-      }
-
-
-
-//    }
-
-
-//      waitForUser();
-
-
-  }
-  catch (Exception e) {
-    Log.e("MyDepth", "Depth estimation failed: " + e.getMessage(), e);
-  }
-
-}
-
-  private void runDepthEstimation(Image cameraImage, Image depthImage, Image confidenceImage) {
-
-    try  {
-
-            // get the image dimensions and rotation angle
-      int imageWidth = cameraImage.getWidth();
-      int imageHeight = cameraImage.getHeight();
-
-      int displayRotation = getWindowManager().getDefaultDisplay().getRotation();
-      int rotationDegrees = getCameraImageRotationDegrees(this, displayRotation);
-
-      // Get bitmap from Camera image and then close cameraImage
-      Bitmap cameraBitmap = imageToBitmap(cameraImage);
-      cameraImage.close();  // as soon as we're done with it
-      cameraBitmap = rotateBitmap(cameraBitmap, rotationDegrees);
-      Bitmap depthModelInputBitmap = Bitmap.createScaledBitmap(cameraBitmap, 256, 256, true);
-
-      Log.i("CollectFrames", "Camera done ...");
-
-      // get the raw depth image, extract the depth points, and transform it to camera image space
-      // and then close the images
-      int depthWidth = depthImage.getWidth();
-      int depthHeight = depthImage.getHeight();
-      float[] points4d = getDepthPoints(depthImage, confidenceImage, 0.7f);
-
-      Log.i("CollectFrames", "points4d done ...");
-
-      float[] transformedPoints4d = null;
-      if (points4d != null) transformedPoints4d = mapDepthPointsToCameraImage(points4d, imageWidth, imageHeight, depthWidth, depthHeight);
-
-      Log.i("CollectFrames", "transformedPoints4d done ...");
-
-      depthImage.close();
-      confidenceImage.close();
-
-        ByteBuffer inputBuffer = bitmapToByteBuffer(depthModelInputBitmap);           // convert bitmap to input buffer and create empty output buffer to write to
-        float[][][][] outputBuffer = new float[1][256][256][1];
-        tflite_interpreter.run(inputBuffer, outputBuffer);  // run MIDAS
-
-Log.i("CollectFrames", "tflite done ...");
-
-
-      ColourMapResult colourMapResult = createColorMappedBitmap(outputBuffer, 256, 256); // create coloured bitmap from Midas output buffer
-
-        Bitmap depthModelBitmapColour = Bitmap.createScaledBitmap(colourMapResult.colourBitmap, 480, 640, true);
-        Bitmap depthModelBitmapGrey = Bitmap.createScaledBitmap(colourMapResult.greyscaleBitmap, 480, 640, true);
-
-Log.i("CollectFrames", "depthMaps done ...");
-
-      // display the depth map as a transparent overlay over the camera image
-      Bitmap combinedBitmap = cameraBitmap.copy(Bitmap.Config.ARGB_8888, true);
-      Canvas canvas = new Canvas(combinedBitmap);
-        Paint transparentPaint = new Paint();
-        transparentPaint.setAlpha(128); // or tune as needed (0=transparent, 255=opaque)
-        canvas.drawBitmap(depthModelBitmapColour, 0, 0, transparentPaint);
-
-Log.i("CollectFrames", "draw depthMaps done ...");
-
-if (transformedPoints4d == null) Log.i("CollectFrames", String.format("transformedPoints4d is null"));
-
-      // draw the depth points over the camera and depth map images
-      if (transformedPoints4d != null) {
-        Bitmap depthPointsImage = drawPointsOverlay(transformedPoints4d, imageWidth, imageHeight);
-        depthPointsImage = rotateBitmap(depthPointsImage, rotationDegrees);
-        canvas.drawBitmap(depthPointsImage, 0, 0, null);
-      }
-
-Log.i("CollectFrames", "draw points done ...");
-
-      displayBitmapWithAspectRatio(combinedBitmap);
-
-Log.i("CollectFrames", "displayBitmapWithAspectRatio points done ...");
-
-//      numFramesTaken++; // update it right at the end so we don't count excpetion cases
-      Log.i("CollectFrames", String.format("Num Frames Taken %d", numFramesCollected -1));
-
-      if (numFramesCollected <= 10) {
-
-        saveFloatArrayToBinary(transformedPoints4d, String.format("depth_points_%d.bin", numFramesCollected - 1));
-        Log.i("CollectFrames", String.format("Saved depth points for frame %d", numFramesCollected - 1));
-
-        float[] cameraBitmapFloatArray = convertBitmapToFloatPointsArray(cameraBitmap);
-        saveFloatArrayToBinary(cameraBitmapFloatArray, String.format("depth_map_camera_%d.bin", numFramesCollected -1));
-        Log.i("CollectFrames", String.format("Saved depth map camera for frame %d", numFramesCollected -1));
-
-        float[] colourBitmapFloatArray = convertBitmapToFloatPointsArray(depthModelBitmapColour);
-        saveFloatArrayToBinary(colourBitmapFloatArray, String.format("depth_map_colour_%d.bin", numFramesCollected -1));
-        Log.i("CollectFrames", String.format("Saved depth map colour for frame %d", numFramesCollected -1));
-
-        float[] greyBitmapFloatArray = convertBitmapToFloatPointsArray(depthModelBitmapGrey);
-        saveFloatArrayToBinary(greyBitmapFloatArray, String.format("depth_map_grey_%d.bin", numFramesCollected -1));
-        Log.i("CollectFrames", String.format("Saved depth map grey for frame %d", numFramesCollected -1));
-
-      }
-
-
-//      waitForUser();
-
-
-    }
-    catch (Exception e) {
-      Log.e("MyDepth", "Depth estimation failed: " + e.getMessage(), e);
-    }
-
-  }
-
-// </editor-fold>
-
-// <editor-fold desc="Helper Methods - ARCore Depth">
 
   public static Bitmap drawPointsOverlay(float[] points, int bitmapWidth, int bitmapHeight) {
 
@@ -961,208 +665,184 @@ Log.i("CollectFrames", "displayBitmapWithAspectRatio points done ...");
     return overlayBitmap;
   }
 
-  private static float clamp(float val) {
-    return Math.max(0f, Math.min(1f, val));
-  }
+  private static ColourMapResult createColorMappedBitmap(float[][][][] depth, int width, int height) {
+    float min = Float.MAX_VALUE;
+    float max = Float.MIN_VALUE;
 
-  public float[] mapDepthPointsToCameraImage(float[] points, int imageWidth, int imageHeight, int depthWidth, int depthHeight) {
-
-    float[] transformedPoints = null;
-    if (points.length == 0) return transformedPoints;
-
-    float depthAspect = (float) depthHeight / (float) depthWidth;
-    float b = depthAspect * (float) imageWidth;
-    float c = (float) imageHeight - b;
-
-
-    final int imageHeightOffset = (int) (c / 2.0f);
-
-    int numPoints = points.length / 4;
-
-    transformedPoints = new float[points.length];
-
-    for (int i = 0; i < numPoints; i++) {
-      float u = points[i*4] / depthWidth;
-      float v = points[i * 4 + 1] / depthHeight;
-
-      float imageX = u * imageWidth;
-      float imageY = v * (imageHeight - 2 * imageHeightOffset) + imageHeightOffset;
-
-      transformedPoints[i * 4]     = imageX;
-      transformedPoints[i * 4 + 1] = imageY;
-      transformedPoints[i * 4 + 2] = points[i * 4 + 2]; // depth
-      transformedPoints[i * 4 + 3] = points[i * 4 + 3]; // confidence
-
-      if (imageX < 0 || imageX >= imageWidth || imageY < 0 || imageY >= imageHeight) {
-        Log.i("MyDepthBounds", "Point out of bounds: " + i + ", " + imageX + ", " + imageY);
+    // First pass: find min/max depth
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        float d = depth[0][y][x][0];
+        if (d < min) min = d;
+        if (d > max) max = d;
       }
     }
 
-    return transformedPoints;
-  }
+    Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+    Bitmap greyscaleBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
 
-  private float[] getDepthPoints(Image depthImage, Image confidenceImage, final float confidenceLimit) {
+    // Second pass: map each value to a color
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        float normalized = (depth[0][y][x][0] - min) / (max - min);  // ∈ [0, 1]
+        int color = infernoColormap(normalized);  // Choose colormap here
+        bitmap.setPixel(x, y, color);
 
-    float[] points = null;
-
-    try {
-
-      final int depthWidth = depthImage.getWidth();
-      final int depthHeight = depthImage.getHeight();
-
-      final float maxNumberOfPointsToRender = 20000;
-
-      points = new float[depthWidth * depthHeight * 4];
-
-      int step = (int) Math.ceil(Math.sqrt(depthWidth * depthHeight / maxNumberOfPointsToRender));
-
-      int numPointsUsed = 0;
-
-      ShortBuffer depthBuffer = convertDepthImageToShortBuffer(depthImage);
-      ByteBuffer confidenceBuffer = convertConfidenceImageToByteBuffer(confidenceImage);
-
-      final Image.Plane confidenceImagePlane = confidenceImage.getPlanes()[0];
-      int rowStride = confidenceImagePlane.getRowStride();
-      int pixelStride = confidenceImagePlane.getPixelStride();
-
-      for (int iy = 0; iy < depthHeight; iy += step) {
-        for (int ix = 0; ix < depthWidth; ix += step) {
-
-          int depthMillimeters = depthBuffer.get(iy * depthWidth + ix); // Depth image pixels are in mm.
-
-          if (depthMillimeters == 0) {
-            continue;
-          }
-
-          float depthMeters = depthMillimeters / 1000.0f;
-
-          // Retrieve the confidence value for this pixel.
-          final byte confidencePixelValue =
-                  confidenceBuffer.get(
-                          iy * rowStride
-                                  + ix * pixelStride);
-
-          final float confidenceNormalized = ((float) (confidencePixelValue & 0xff)) / 255.0f;
-          if (confidenceNormalized < confidenceLimit) {
-            continue;
-          }
-
-          points[numPointsUsed * 4] = ix;
-          points[numPointsUsed * 4 + 1] = iy;
-          points[numPointsUsed * 4 + 2] = depthMeters;
-          points[numPointsUsed * 4 + 3] = confidenceNormalized;
-
-          numPointsUsed++;
-        }
+        int grey = Math.round(normalized * 255.0f);
+        grey = Math.max(0, Math.min(255, grey)); // Clamp
+        int argb = Color.argb(255, grey, grey, grey);  // Full alpha, grayscale RGB
+        greyscaleBitmap.setPixel(x, y, argb);
       }
-
-      points = Arrays.copyOf(points, numPointsUsed * 4);
     }
 
-    catch (Throwable t) {
-      // Avoid crashing the application due to unhandled exceptions.
-      Log.e(TAG, "Exception on the OpenGL thread", t);
-    }
-
-    Log.i("MyDepth", "PointCloud size: " + points.length / 4);
-
-    return points;
+    return new ColourMapResult(bitmap, greyscaleBitmap);
   }
 
-  private static ShortBuffer convertDepthImageToShortBuffer(Image depth)    {
+  public static class ColourMapResult {
+    public final Bitmap colourBitmap;
+    public final Bitmap greyscaleBitmap;
 
-    final Image.Plane depthImagePlane = depth.getPlanes()[0];
-
-    ByteBuffer depthByteBufferOriginal = depthImagePlane.getBuffer();
-    ByteBuffer depthByteBuffer = ByteBuffer.allocate(depthByteBufferOriginal.capacity());
-
-    depthByteBuffer.order(ByteOrder.LITTLE_ENDIAN);
-
-    while (depthByteBufferOriginal.hasRemaining()) {
-      depthByteBuffer.put(depthByteBufferOriginal.get());
+    public ColourMapResult(Bitmap colorBitmap, Bitmap greyscaleBitmap) {
+      this.colourBitmap = colorBitmap;
+      this.greyscaleBitmap = greyscaleBitmap;
     }
-    depthByteBuffer.rewind();
-
-    return depthByteBuffer.asShortBuffer();
   }
 
-  private static ByteBuffer convertConfidenceImageToByteBuffer(Image confidence)  {
-    final Image.Plane confidenceImagePlane = confidence.getPlanes()[0];
-    ByteBuffer confidenceBufferOriginal = confidenceImagePlane.getBuffer();
-    ByteBuffer confidenceBuffer = ByteBuffer.allocate(confidenceBufferOriginal.capacity());
-    confidenceBuffer.order(ByteOrder.LITTLE_ENDIAN);
-    while (confidenceBufferOriginal.hasRemaining()) {
-      confidenceBuffer.put(confidenceBufferOriginal.get());
-    }
-    confidenceBuffer.rewind();
-
-    return confidenceBuffer;
+  private Bitmap rotateBitmap(Bitmap bitmap, int rotationDegrees) {
+    Matrix matrix = new Matrix();
+    matrix.postRotate(rotationDegrees);
+    return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
   }
 
 // </editor-fold>
 
-// <editor-fold desc="Helper Methods - images">
+// <editor-fold desc="Main runDepthEstimation method">
+  private void runDepthEstimation(FrameData frameData, int frameNumber, int batchNumber) {
 
+  try  {
 
-  private Bitmap imageToBitmap(Image image) {
-    if (image.getFormat() != ImageFormat.YUV_420_888) {
-      Log.e("DepthModel", "Unexpected image format: " + image.getFormat());
-      return null;
+    int displayRotation = getWindowManager().getDefaultDisplay().getRotation();
+    int rotationDegrees = getCameraImageRotationDegrees(this, displayRotation);
+
+    Bitmap cameraBitmap = frameData.getCameraBitmap();
+    cameraBitmap = rotateBitmap(cameraBitmap, rotationDegrees);
+    Bitmap depthModelInputBitmap = Bitmap.createScaledBitmap(cameraBitmap, 256, 256, true);
+
+    // get the raw depth image, extract the depth points, and transform it to camera image space
+    // and then close the images
+    float[] points4d = frameData.getDepthPoints(0.5f);
+    float[] transformedPoints4d = null;
+//    if (points4d != null) transformedPoints4d = mapDepthPointsToCameraImage(points4d, frameData.cameraWidth, frameData.cameraHeight, frameData.depthWidth, frameData.depthHeight);
+    if (points4d != null) transformedPoints4d = frameData.mapDepthPointsToCameraImage(points4d);
+
+    float[] confidencePoints4d = frameData.getConfidencePoints();
+    float[] transformedConfidencePoints4d = null;
+    if (confidencePoints4d != null) transformedConfidencePoints4d = frameData.mapDepthPointsToCameraImage(confidencePoints4d);
+
+    ByteBuffer inputBuffer = bitmapToByteBuffer(depthModelInputBitmap);           // convert bitmap to input buffer and create empty output buffer to write to
+    float[][][][] outputBuffer = new float[1][256][256][1];
+    tflite_interpreter.run(inputBuffer, outputBuffer);  // run MIDAS
+
+    ColourMapResult colourMapResult = createColorMappedBitmap(outputBuffer, 256, 256); // create coloured bitmap from Midas output buffer
+
+    Bitmap depthModelBitmapColour = Bitmap.createScaledBitmap(colourMapResult.colourBitmap, 480, 640, true);
+    Bitmap depthModelBitmapGrey = Bitmap.createScaledBitmap(colourMapResult.greyscaleBitmap, 480, 640, true);
+
+    // display the depth map as a transparent overlay over the camera image
+    Bitmap combinedBitmap = cameraBitmap.copy(Bitmap.Config.ARGB_8888, true);
+    Canvas canvas = new Canvas(combinedBitmap);
+
+    Paint transparentPaint = new Paint();
+    transparentPaint.setAlpha(128); // or tune as needed (0=transparent, 255=opaque)
+    canvas.drawBitmap(depthModelBitmapColour, 0, 0, transparentPaint);
+
+    // draw the depth points over the camera and depth map images
+    if (transformedPoints4d != null) {
+      Bitmap depthPointsImage = drawPointsOverlay(transformedPoints4d, frameData.cameraWidth, frameData.cameraHeight);
+      depthPointsImage = rotateBitmap(depthPointsImage, rotationDegrees);
+      canvas.drawBitmap(depthPointsImage, 0, 0, null);
     }
 
-    try {
-      int width = image.getWidth();
-      int height = image.getHeight();
-      Image.Plane[] planes = image.getPlanes();
+//    displayBitmapWithAspectRatio(combinedBitmap);
 
-      // Allocate space for NV21 buffer
-      byte[] nv21 = new byte[width * height * 3 / 2];
+//    if (numFramesTaken <= 10) {
 
-      // Copy Y plane
-      ByteBuffer yBuffer = planes[0].getBuffer();
-      int yRowStride = planes[0].getRowStride();
-      int yPixelStride = planes[0].getPixelStride();
 
-      int pos = 0;
-      for (int row = 0; row < height; row++) {
-        int yOffset = row * yRowStride;
-        for (int col = 0; col < width; col++) {
-          nv21[pos++] = yBuffer.get(yOffset + col * yPixelStride);
-        }
+      // TIMESTAMPS
+      float[] timeStamps = new float[] {
+              frameData.frameTimestamp - frameData.baseTimestamp,
+              frameData.cameraTimestamp - frameData.baseTimestamp,
+              frameData.depthTimestamp - frameData.baseTimestamp,
+              frameData.confidenceTimestamp - frameData.baseTimestamp
+      };
+      saveFloatArrayToBinary(timeStamps, String.format("batch_%d_timestamps_%d.bin", batchNumber, frameNumber));
+      Log.i("CollectFrames", String.format("Saved timestamps for batch %d, frame %d", batchNumber, frameNumber));
+
+      // DEPTH POINTS
+      if (transformedPoints4d != null) {
+        saveFloatArrayToBinary(transformedPoints4d, String.format("batch_%d_depth_points_%d.bin", batchNumber, frameNumber));
+        Log.i("CollectFrames", String.format("Saved depth points for batch %d, frame %d", batchNumber, frameNumber));
       }
 
-      // Interleave VU for NV21 format
-      ByteBuffer uBuffer = planes[1].getBuffer();
-      ByteBuffer vBuffer = planes[2].getBuffer();
-      int chromaRowStride = planes[1].getRowStride();
-      int chromaPixelStride = planes[1].getPixelStride();
+      // CAMERA IMAGE
+      float[] cameraBitmapFloatArray = convertBitmapToFloatPointsArray(cameraBitmap);
+      saveFloatArrayToBinary(cameraBitmapFloatArray, String.format("batch_%d_depth_map_camera_%d.bin", batchNumber, frameNumber));
+      Log.i("CollectFrames", String.format("Saved depth map camera for batch %d, frame %d", batchNumber, frameNumber));
 
-      int uvHeight = height / 2;
-      int uvWidth = width / 2;
+      // COLOUR DEPTH MAP
+      float[] colourBitmapFloatArray = convertBitmapToFloatPointsArray(depthModelBitmapColour);
+      saveFloatArrayToBinary(colourBitmapFloatArray, String.format("batch_%d_depth_map_colour_%d.bin", batchNumber, frameNumber));
+      Log.i("CollectFrames", String.format("Saved depth map colour for batch %d, frame %d", batchNumber, frameNumber));
 
-      for (int row = 0; row < uvHeight; row++) {
-        int uvOffset = row * chromaRowStride;
-        for (int col = 0; col < uvWidth; col++) {
-          int uIndex = uvOffset + col * chromaPixelStride;
-          int vIndex = uvOffset + col * chromaPixelStride;
+      // GREYSCALE DEPTH MAP based on reciprocal depth
+      float[] greyBitmapFloatArray = convertBitmapToFloatPointsArray(depthModelBitmapGrey);
+      saveFloatArrayToBinary(greyBitmapFloatArray, String.format("batch_%d_depth_map_grey_%d.bin", batchNumber, frameNumber));
+      Log.i("CollectFrames", String.format("Saved depth map grey for batch %d, frame %d", batchNumber, frameNumber));
 
-          // V first, then U for NV21
-          nv21[pos++] = vBuffer.get(vIndex);
-          nv21[pos++] = uBuffer.get(uIndex);
-        }
+      // CONFIDENCE POINTS
+      if (transformedConfidencePoints4d != null) {
+        saveFloatArrayToBinary(transformedConfidencePoints4d, String.format("batch_%d_confidence_points_%d.bin", batchNumber, frameNumber));
+        Log.i("CollectFrames", String.format("Saved confidence points for batch %d, frame %d", batchNumber, frameNumber));
       }
 
-      YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21, width, height, null);
-      ByteArrayOutputStream out = new ByteArrayOutputStream();
-      yuvImage.compressToJpeg(new Rect(0, 0, width, height), 100, out);
-      byte[] jpegData = out.toByteArray();
-      return BitmapFactory.decodeByteArray(jpegData, 0, jpegData.length);
+      // TEXTURE INTRINSICS
+      float[] textureIntrinsics = frameData.textureIntrinsicsToFloatArray();
+      saveFloatArrayToBinary(textureIntrinsics, String.format("batch_%d_texture_intrinsics_%d.bin", batchNumber, frameNumber));
 
-    } catch (Exception e) {
-      Log.e("DepthModel", "Failed to convert YUV to Bitmap", e);
-      return null;
-    }
+      // CAMERA INTRINSICS
+      float[] cameraIntrinsics = frameData.cameraIntrinsicsToFloatArray();
+      saveFloatArrayToBinary(cameraIntrinsics, String.format("batch_%d_camera_intrinsics_%d.bin", batchNumber, frameNumber));
+
+      // EXTRINSIC MATRIX
+      float[] extrinsicMatrix = frameData.extrinsicMatrixHomToFloatArray();
+      saveFloatArrayToBinary(extrinsicMatrix, String.format("batch_%d_extrinsic_matrix_%d.bin", batchNumber, frameNumber));
+
+//    }
+
+
+//      waitForUser();
+
+
   }
+  catch (Exception e) {
+    Log.e("MyDepth", "Depth estimation failed: " + e.getMessage(), e);
+  }
+
+}
+
+
+// </editor-fold>
+
+// <editor-fold desc="Helper Methods">
+
+  private static float clamp(float val) {
+    return Math.max(0f, Math.min(1f, val));
+  }
+
+//
+// </editor-fold>
+
+// <editor-fold desc="Helper Methods - orientation">
 
   private int getCameraImageRotationDegrees(Context context, int displayRotation) {
     CameraManager cameraManager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
@@ -1208,72 +888,6 @@ Log.i("CollectFrames", "displayBitmapWithAspectRatio points done ...");
     return 0;
   }
 
-  private static ColourMapResult createColorMappedBitmap(float[][][][] depth, int width, int height) {
-    float min = Float.MAX_VALUE;
-    float max = Float.MIN_VALUE;
-
-    // First pass: find min/max depth
-    for (int y = 0; y < height; y++) {
-      for (int x = 0; x < width; x++) {
-        float d = depth[0][y][x][0];
-        if (d < min) min = d;
-        if (d > max) max = d;
-      }
-    }
-
-    Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-    Bitmap greyscaleBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-
-    // Second pass: map each value to a color
-    for (int y = 0; y < height; y++) {
-      for (int x = 0; x < width; x++) {
-        float normalized = (depth[0][y][x][0] - min) / (max - min);  // ∈ [0, 1]
-        int color = infernoColormap(normalized);  // Choose colormap here
-        bitmap.setPixel(x, y, color);
-
-        int grey = Math.round(normalized * 255.0f);
-        grey = Math.max(0, Math.min(255, grey)); // Clamp
-        int argb = Color.argb(255, grey, grey, grey);  // Full alpha, grayscale RGB
-        greyscaleBitmap.setPixel(x, y, argb);
-      }
-    }
-
-    return new ColourMapResult(bitmap, greyscaleBitmap);
-  }
-
-  public static class ColourMapResult {
-    public final Bitmap colourBitmap;
-    public final Bitmap greyscaleBitmap;
-
-    public ColourMapResult(Bitmap colorBitmap, Bitmap greyscaleBitmap) {
-      this.colourBitmap = colorBitmap;
-      this.greyscaleBitmap = greyscaleBitmap;
-    }
-  }
-
-// </editor-fold>
-
-// <editor-fold desc="Helper methods - display bitmaps">
-  public void displayBitmapWithAspectRatio(Bitmap bitmap) {
-    if (bitmap == null || bitmapView == null) return;
-
-//    clearBitmapView();
-    bitmapView.setAdjustViewBounds(true);
-    bitmapView.setScaleType(ImageView.ScaleType.FIT_CENTER);
-    bitmapView.setAlpha(1.0f);
-    bitmapView.setVisibility(View.VISIBLE);
-    bitmapView.setImageBitmap(bitmap);
-//    bitmapView.bringToFront(); // ensure it's above GLSurfaceView
-  }
-// </editor-fold>
-
-// <editor-fold desc="Helper methods - bitmap transformations">
-  private Bitmap rotateBitmap(Bitmap bitmap, int rotationDegrees) {
-    Matrix matrix = new Matrix();
-    matrix.postRotate(rotationDegrees);
-    return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-  }
-
 // </editor-fold>
 
 // <editor-fold desc="Helper methods - for Midas">
@@ -1302,7 +916,6 @@ Log.i("CollectFrames", "displayBitmapWithAspectRatio points done ...");
   }
 
 // </editor-fold>
-
 
 // <editor-fold desc="Helper methods - output">
 
