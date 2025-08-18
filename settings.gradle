@@ -1,1 +1,1 @@
-include ':velocity_app'
+include ':velocity_app', ':opencv'

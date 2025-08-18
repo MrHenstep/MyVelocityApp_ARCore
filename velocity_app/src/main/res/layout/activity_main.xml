@@ -29,7 +29,7 @@
       android:layout_gravity="top"/>
 
   <ImageView
-      android:id="@+id/debug_depth_input_view"
+      android:id="@+id/preview_view"
       android:layout_width="match_parent"
       android:layout_height="match_parent"
       android:layout_gravity="center"
@@ -38,16 +38,17 @@
       android:alpha="0.5"
       android:visibility="gone"/>
 
-  <ImageView
-      android:id="@+id/bitmap_view"
-      android:layout_width="match_parent"
-      android:layout_height="wrap_content"
-      android:layout_gravity="center"
-      android:adjustViewBounds="true"
-      android:scaleType="fitCenter"
-      android:background="@android:color/transparent"
-      android:alpha="1.0"
-      android:visibility="gone" />
+
+<!--  <ImageView-->
+<!--      android:id="@+id/bitmap_view"-->
+<!--      android:layout_width="match_parent"-->
+<!--      android:layout_height="wrap_content"-->
+<!--      android:layout_gravity="center"-->
+<!--      android:adjustViewBounds="true"-->
+<!--      android:scaleType="fitCenter"-->
+<!--      android:background="@android:color/transparent"-->
+<!--      android:alpha="1.0"-->
+<!--      android:visibility="gone" />-->
 
   <Button
       android:id="@+id/continue_button"
@@ -55,7 +56,7 @@
       android:layout_height="wrap_content"
       android:text="Continue"
       android:visibility="gone"
-      android:layout_gravity="center"
+      android:layout_gravity="bottom|center_horizontal"
       />
 
   <!--</RelativeLayout>-->

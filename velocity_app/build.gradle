@@ -12,6 +12,7 @@ def setVersionName = { ->
 
 android {
     compileSdkVersion 28
+
     defaultConfig {
         applicationId "com.google.ar.core.codelab.rawdepth"
 
@@ -21,11 +22,18 @@ android {
         targetSdkVersion 28
         versionCode 1
         versionName setVersionName()
+
+        // ✅ Put ndk here, not at the top level
+        ndk {
+            abiFilters "arm64-v8a", "x86_64"   // both in one line
+        }
     }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+
     buildTypes {
         release {
             minifyEnabled false
@@ -33,6 +41,7 @@ android {
         }
     }
 }
+
 
 dependencies {
     // ARCore library
@@ -55,4 +64,6 @@ dependencies {
 
     implementation 'org.tensorflow:tensorflow-lite:2.13.0'            // Or your current version
     implementation 'org.tensorflow:tensorflow-lite-gpu:2.13.0'
+
+    implementation project(':opencv')
 }

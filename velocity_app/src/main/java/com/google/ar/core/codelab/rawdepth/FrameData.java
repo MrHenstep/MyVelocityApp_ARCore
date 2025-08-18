@@ -67,6 +67,7 @@ public class FrameData {
     public float[] cameraPrincipalPoint;
     public float[] cameraFocalLength;
 
+
     public boolean isValid = false;
 //</editor-fold>
 

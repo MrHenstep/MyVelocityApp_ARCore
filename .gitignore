@@ -1,9 +1,8 @@
 # Android Studio configuration.
 *.iml
 .idea/
-
-# Gradle configuration.
 .gradle/
+
 build/
 
 # User configuration.
@@ -20,3 +19,6 @@ to_be_deleted/
 # Python cache
 __pycache__/
 *.py[cod]
+
+# OpenCV
+opencv/

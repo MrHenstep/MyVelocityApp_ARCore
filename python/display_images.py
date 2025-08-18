@@ -1,20 +1,22 @@
 import lib_extraction_and_visualisation as exv
+import os
 
 ##########################################################################################################
 
+# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported"
 # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250812_1_(frametiming)(indoors)(motion)"
 # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250812_2_(frametiming)(outdoors)(motion)"
-FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250813_1_(5fps)(outside)"
-# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported"
+# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250813_1_(5fps)(outside)"
+FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250818_1_(5fps)(outside)(tracking)"
 
 
 ##################################################################################################################
 
-BATCH_NUMBER = 1
+BATCH_NUMBER = 0
 CONFIDENCE_LEVEL = 0.75
 DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, 25.0)
 
-DEPTH_POINTS_INDICES = range(0, 20, 5)
+DEPTH_POINTS_INDICES = range(0, 20, 19)
 
 MATCH_TIMESTAMPS = False
 
@@ -33,7 +35,14 @@ if MATCH_TIMESTAMPS:
 else:
     MATCHED_INDICES = exv.get_all_indices(FILE_PATH, BATCH_NUMBER)
 
-exv.print_closest_ts_match(TIMESTAMPS_TABLE, MATCHED_INDICES)
+# exv.print_closest_ts_match(TIMESTAMPS_TABLE, MATCHED_INDICES)
 MATCHED_FILENAME_TABLE = exv.get_matched_filenames(MATCHED_INDICES, FILE_PATH, BATCH_NUMBER)
 
 exv.batch_display_points_and_images(FILE_PATH, MATCHED_FILENAME_TABLE, CONFIDENCE_LEVEL, TIMESTAMPS_TABLE, MATCHED_INDICES, DEPTH_POINTS_INDICES, DEPTH_RANGE_FOR_COLOUR_MAP)
+
+# for row in MATCHED_FILENAME_TABLE:
+#     # print(row)
+
+#     tracked_points = exv.read_float_data_as_nx4(FILE_PATH, row[5])
+#     print("Tracked points shape:", tracked_points.shape)
+#     print("Tracked points:", tracked_points)

@@ -105,24 +105,24 @@ def plot_regression_fits(df_results, invert_axes, depth_max):
         eps = 1e-3
         if invert_axes:
             x_line = np.linspace(b+eps, 1.0+eps, 100).reshape(-1, 1)
-            print(index, a / (0.2 -b))
+            # print(index, a / (0.2 -b))
             y_line = a / (x_line - b)
         else:
             x_line = np.linspace(0.0+eps, depth_max+eps, 100).reshape(-1, 1)
-            print(index, a / 10 + b)
+            # print(index, a / 10 + b)
             y_line = a / x_line + b
 
 
         plt.plot(x_line, y_line, label=f'Row {index}')
 
     if invert_axes:
-        plt.xlabel('metric_depth_line')
-        plt.ylabel('rec_rel_depth_line')
+        plt.ylabel('metric_depth_line')
+        plt.xlabel('rec_rel_depth_line')
         plt.ylim(0, depth_max)
 
     else:
-        plt.xlabel('rec_rel_depth_line')
-        plt.ylabel('metric_depth_line')
+        plt.ylabel('rec_rel_depth_line')
+        plt.xlabel('metric_depth_line')
         plt.ylim(0, 1)
 
         
@@ -140,13 +140,14 @@ if (__name__ == "__main__"):
 
     # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250812_1_(frametiming)(indoors)(motion)"
     # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250812_2_(frametiming)(outdoors)(motion)"
-    FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250813_1_(5fps)(outside)"
+    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250813_1_(5fps)(outside)"
     # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported"
+    FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250818_1_(5fps)(outside)(tracking)"
 
     ###########################################################################################################
 
 
-    BATCH_NUMBER = 1
+    BATCH_NUMBER = 0
     CONFIDENCE_LEVEL = 0.75
     DEPTH_MAX = 25.0
     DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, DEPTH_MAX)
@@ -161,10 +162,11 @@ if (__name__ == "__main__"):
     WEIGHTS_SIGMOID = (X_CUT, X_WIDTH)
 
     INVERT_AXES = False
+    DISPLAY_PLOTS = True
 
     ###########################################################################################################
 
-    df_results = batch_fit_regression_model(FILE_PATH, BATCH_NUMBER, DEPTH_POINTS_INDICES, CONFIDENCE_LEVEL, DEPTH_RANGE_FOR_COLOUR_MAP, weights_sigmoid=WEIGHTS_SIGMOID, display_plots=False, match_timestamps=MATCH_TIMESTAMPS)
+    df_results = batch_fit_regression_model(FILE_PATH, BATCH_NUMBER, DEPTH_POINTS_INDICES, CONFIDENCE_LEVEL, DEPTH_RANGE_FOR_COLOUR_MAP, weights_sigmoid=WEIGHTS_SIGMOID, display_plots=DISPLAY_PLOTS, match_timestamps=MATCH_TIMESTAMPS)
 
     plot_regression_fits(df_results, INVERT_AXES, DEPTH_MAX)
 

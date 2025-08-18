@@ -118,20 +118,23 @@ def get_matched_filenames(match_indices, directory, batch_number):
         depth_map_camera_file = f"batch_{batch_number}_depth_map_camera_{mm}.bin"
         depth_map_colour_file = f"batch_{batch_number}_depth_map_colour_{mm}.bin"
         depth_map_grey_file = f"batch_{batch_number}_depth_map_grey_{mm}.bin"
+        tracked_point_file = f"batch_{batch_number}_tracked_point_{mm}.bin"
 
         depth_points_path = os.path.join(directory, depth_points_file)
         confidence_points_path = os.path.join(directory, confidence_points_file)
         depth_map_camera_path = os.path.join(directory, depth_map_camera_file)
         depth_map_colour_path = os.path.join(directory, depth_map_colour_file)
         depth_map_grey_path = os.path.join(directory, depth_map_grey_file)
+        tracked_point_path = os.path.join(directory, tracked_point_file)
 
         depth_points_exists = depth_points_file if os.path.exists(depth_points_path) else "n/a"
         confidence_points_exists = confidence_points_file if os.path.exists(confidence_points_path) else "n/a"
         depth_map_camera_exists = depth_map_camera_file if os.path.exists(depth_map_camera_path) else "n/a"
         depth_map_colour_exists = depth_map_colour_file if os.path.exists(depth_map_colour_path) else "n/a"
         depth_map_grey_exists = depth_map_grey_file if os.path.exists(depth_map_grey_path) else "n/a"
+        tracked_point_exists = tracked_point_file if os.path.exists(tracked_point_path) else "n/a"
 
-        filename_table.append([depth_points_exists, depth_map_camera_exists, depth_map_colour_exists, depth_map_grey_exists, confidence_points_exists])
+        filename_table.append([depth_points_exists, depth_map_camera_exists, depth_map_colour_exists, depth_map_grey_exists, confidence_points_exists, tracked_point_exists])
 
     return filename_table
 
@@ -140,7 +143,7 @@ def get_matched_filenames(match_indices, directory, batch_number):
 ### extracting the data from the files 
 
 
-def get_depth_points_data(file_path, file_name, confidence_level):
+def read_float_data_as_nx4(file_path, file_name, confidence_level=None):
 
     # Load raw binary float32 data, little-endian
     data = np.fromfile(file_path + "/" + file_name, dtype='<f4')  # '<f4' = little-endian float32
@@ -150,40 +153,10 @@ def get_depth_points_data(file_path, file_name, confidence_level):
     data_reshaped = data.reshape(-1, 4)
 
     # Filter out points with confidence below the specified level
-    data_reshaped = data_reshaped[data_reshaped[:, 3] >= confidence_level]
-    return data_reshaped 
+    if confidence_level is not None:
+        data_reshaped = data_reshaped[data_reshaped[:, 3] >= confidence_level]
+    return data_reshaped
 
-# def get_depth_points_bitmap(overlay_points=None):
-    num_rows = 640
-    num_cols = 480
-
-    # Create a uniform grey background (e.g., 0.5 for all channels)
-    rgb_img = np.full((num_rows, num_cols, 3), 1.0, dtype=np.float32)
-    
-    # Overlay points if provided
-    if overlay_points is not None and len(overlay_points) > 0:
-        # overlay_points should be an array of shape (N, 3): x, y, value
-        xs = overlay_points[:, 1].astype(int)
-        ys = overlay_points[:, 0].astype(int)
-        values = overlay_points[:, 2]
-
-        # Normalize values to [0, 1] for color mapping
-        norm_values = (values - np.min(values)) / (np.ptp(values) + 1e-8)
-        cmap = plt.get_cmap('inferno')
-        colors = cmap(norm_values)[:, :3]  # Get RGB colors
-
-        for x, y, color in zip(xs, ys, colors):
-            if 0 <= x < num_cols and 0 <= y < num_rows:
-                # Draw a 3x3 square centered at (y, x)
-                for dx in range(-1, 2):
-                    for dy in range(-1, 2):
-                        nx, ny = x + dx, y + dy
-                        if 0 <= nx < num_rows and 0 <= ny < num_cols:
-                            rgb_img[ny, num_cols - nx] = color
-
-    # Convert to uint8 bitmap
-    depth_points_bitmap = (rgb_img * 255).astype(np.uint8)
-    return depth_points_bitmap
 
 def get_depth_map_data(file_path, file_name):
     # Load raw binary float32 data, little-endian
@@ -194,7 +167,7 @@ def get_depth_map_data(file_path, file_name):
 
     return data_reshaped
 
-def get_depth_map_bitmap(data, overlay_points=None, depth_range=(0.0, 5.0), colour_map='inferno'):
+def get_depth_map_bitmap(data, overlay_points=None, tracked_points=None, depth_range=(0.0, 5.0), colour_map='inferno'):
     num_rows = 640
     num_cols = 480
 
@@ -242,6 +215,25 @@ def get_depth_map_bitmap(data, overlay_points=None, depth_range=(0.0, 5.0), colo
                         if 0 <= nx < num_cols and 0 <= ny < num_rows:
                             rgb_img[ny, num_cols - nx] = color
 
+    # Tracked points if provided
+    if tracked_points is not None and len(tracked_points) > 0:
+        xs = num_cols - tracked_points[:, 0].astype(int)  # because of different coordinate systems
+        ys = tracked_points[:, 1].astype(int)
+
+        # Draw a blue circle centered at each tracked point
+        radius = 20
+        thickness = 4
+
+        for x, y in zip(xs, ys):
+            if 0 <= x < num_cols and 0 <= y < num_rows:
+                for dx in range(-radius, radius + 1):
+                    for dy in range(-radius, radius + 1):
+                        dist = np.sqrt(dx ** 2 + dy ** 2)
+                        if radius - thickness <= dist <= radius + 0.5:
+                            nx, ny = x + dx, y + dy
+                            if 0 <= nx < num_cols and 0 <= ny < num_rows:
+                                rgb_img[ny, num_cols - nx] = [1.0, 1.0, 1.0]
+
     # Convert to uint8 bitmap
     depth_map_bitmap = (rgb_img * 255).astype(np.uint8)
     return depth_map_bitmap
@@ -258,16 +250,20 @@ def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range)
 
     # DEPTH POINTS
     if row[0] != "n/a":
-        points = get_depth_points_data(file_path, row[0], confidence_level)
+        points = read_float_data_as_nx4(file_path, row[0], confidence_level)
         depth_points_bitmap = get_depth_map_bitmap(data=None, overlay_points=points, depth_range=depth_range)
     else:
         depth_points_bitmap = get_depth_map_bitmap(data=None, overlay_points=None)
 
     # CAMERA IMAGE
     if row[1] != "n/a":
-        points = get_depth_points_data(file_path, row[0], confidence_level)
+        points = read_float_data_as_nx4(file_path, row[0])
         depth_map_camera = get_depth_map_data(file_path, row[1])
-        depth_map_camera_bitmap = get_depth_map_bitmap(depth_map_camera, overlay_points=points, depth_range=depth_range)
+        if row[5] != "n/a":
+            tracked_points = read_float_data_as_nx4(file_path, row[5])
+            depth_map_camera_bitmap = get_depth_map_bitmap(depth_map_camera, overlay_points=points, tracked_points=tracked_points, depth_range=depth_range)
+        else:
+            depth_map_camera_bitmap = get_depth_map_bitmap(depth_map_camera, overlay_points=points, depth_range=depth_range)
     else:
         depth_map_camera_bitmap = get_depth_map_bitmap(None)
 
@@ -280,7 +276,7 @@ def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range)
 
     # CONFIDENCE POINTS
     if row[4] != "n/a":
-        confidence_points = get_depth_points_data(file_path, row[4], confidence_level)
+        confidence_points = read_float_data_as_nx4(file_path, row[4])
         confidence_points_bitmap = get_depth_map_bitmap(data=None, depth_range=(0.0, 1.0), overlay_points=confidence_points, colour_map='Greys')
         overlay_points = confidence_points
     else:
@@ -290,7 +286,7 @@ def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range)
 
 def get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, confidence_level):
 
-    points = get_depth_points_data(file_path, depth_points_file, confidence_level)
+    points = read_float_data_as_nx4(file_path, depth_points_file, confidence_level)
 
     num_points = points.shape[0]
 
@@ -321,7 +317,7 @@ def get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, co
 def plot_points_and_images(depth_points_bitmap, depth_map_camera_bitmap, depth_map_colour_bitmap, confidence_points_bitmap):
 
     # Display the two bitmaps side by side
-    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+    fig, axes = plt.subplots(1, 4, figsize=(25, 5))
     axes[0].imshow(depth_points_bitmap)
     axes[0].set_title('Depth Points Bitmap')
     axes[1].imshow(depth_map_camera_bitmap)
