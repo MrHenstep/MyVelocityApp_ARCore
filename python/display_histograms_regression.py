@@ -2,11 +2,12 @@ import lib_extraction_and_visualisation as exv
 
 ##########################################################################################################
 
-# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
 # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250812_1_(frametiming)(indoors)(motion)"
 # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250812_2_(frametiming)(outdoors)(motion)"
 # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250813_1_(5fps)(outside)"
-FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250818_1_(5fps)(outside)(tracking)"
+# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250818_1_(5fps)(outside)(tracking)"
+# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250819_1_(5fps)(car)(Ziggy)"
 
 ##################################################################################################################
 
@@ -14,7 +15,7 @@ BATCH_NUMBER = 0
 CONFIDENCE_LEVEL = 0.75
 DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, 25.0)
 
-DEPTH_POINTS_INDICES = range(0, 20, 19)
+DEPTH_POINTS_INDICES = range(0, 20, 1)
 
 MATCH_TIMESTAMPS = False
 
@@ -37,3 +38,4 @@ exv.print_closest_ts_match(TIMESTAMPS_TABLE, MATCHED_INDICES)
 MATCHED_FILENAME_TABLE = exv.get_matched_filenames(MATCHED_INDICES, FILE_PATH, BATCH_NUMBER)
 
 exv.batch_display_histograms_and_regression(FILE_PATH, MATCHED_FILENAME_TABLE, DEPTH_POINTS_INDICES, CONFIDENCE_LEVEL, depth_range=DEPTH_RANGE_FOR_COLOUR_MAP)
+

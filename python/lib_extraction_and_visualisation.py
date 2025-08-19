@@ -297,7 +297,7 @@ def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range)
         depth_map_camera_bitmap = get_depth_map_bitmap(None)
 
     # DEPTH MAP
-    if row[2] != "n/a":
+    if row[3] != "n/a":
         depth_map = get_depth_map_data(file_path, row[3])
         depth_map_colour_bitmap = get_depth_map_bitmap(depth_map, overlay_points, depth_range=depth_range)
     else:
@@ -313,31 +313,68 @@ def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range)
 
     return depth_points_bitmap, depth_map_camera_bitmap, depth_map_colour_bitmap, confidence_points_bitmap
 
-def get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, confidence_level):
-
+def get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, confidence_level,
+                                width=640, height=480):
+    """
+    Returns N x 5 array: [x, y, depth, confidence, depth_map_value]
+    Assumes depth_map_data rows are [x, y, a, r, g, b] and r=g=b (greyscale).
+    """
+    # Load [x, y, depth, conf]
     points = read_float_data_as_nx4(file_path, depth_points_file, confidence_level)
+    if points.size == 0:
+        return np.zeros((0, 5), dtype=np.float32)
 
+    # Output buffer
     num_points = points.shape[0]
+    combined = np.empty((num_points, 5), dtype=np.float32)
+    combined[:, :4] = points[:, :4]
+    combined[:, 4] = np.nan  # default: NaN if no valid map lookup
 
-    combined_data_points = np.zeros((num_points, 5), dtype=np.float32)
+    # Load per-pixel depth map data [x, y, a, r, g, b] flattened row-major
+    dm = get_depth_map_data(file_path, depth_map_file)
 
-    combined_data_points[:,:2] = points[:,:2]  # x, y
-    combined_data_points[:, 2] = points[:, 2]   # depth
-    combined_data_points[:, 3] = points[:, 3]  # confidence
+    # Integer pixel coords (nearest-neighbour). Use truncation for speed.
+    xi = points[:, 0].astype(np.int32)
+    yi = points[:, 1].astype(np.int32)
 
-    depth_map_data = get_depth_map_data(file_path, depth_map_file)
+    # In-bounds mask
+    inb = (xi >= 0) & (xi < width) & (yi >= 0) & (yi < height)
+    if not np.any(inb):
+        return combined
 
-    for i_point in range(num_points):
-        y, x = combined_data_points[i_point, :2]
-        xi, yi = int(x), int(y)
+    # Row-major flat indices
+    flat = yi[inb] * width + xi[inb]
+
+    # Use r channel only (greyscale assumption r=g=b)
+    combined[inb, 4] = dm[flat, 3].astype(np.float32)
+
+    return combined
+
+# def get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, confidence_level):
+
+#     points = read_float_data_as_nx4(file_path, depth_points_file, confidence_level)
+
+#     num_points = points.shape[0]
+
+#     combined_data_points = np.zeros((num_points, 5), dtype=np.float32)
+
+#     combined_data_points[:,:2] = points[:,:2]  # x, y
+#     combined_data_points[:, 2] = points[:, 2]   # depth
+#     combined_data_points[:, 3] = points[:, 3]  # confidence
+
+#     depth_map_data = get_depth_map_data(file_path, depth_map_file)
+
+#     for i_point in range(num_points):
+#         x, y = combined_data_points[i_point, :2]
+#         xi, yi = int(x), int(y)
         
-        width=480
-        index = xi + yi * width
-        # print(i_point, (xi, yi, depth_map_data[index, 3]))
-        # if 0 <= xi < depth_map_data.shape[0] and 0 <= yi < depth_map_data.shape[1]:
-        combined_data_points[i_point, 4] = depth_map_data[index, 3]
+#         # width=640
+#         index = xi + yi * 640
+#         # print(i_point, (xi, yi, depth_map_data[index, 3]))
+#         # if 0 <= xi < depth_map_data.shape[0] and 0 <= yi < depth_map_data.shape[1]:
+#         combined_data_points[i_point, 4] = depth_map_data[index, 3]
 
-    return combined_data_points
+#     return combined_data_points
 
 
 #######################################################################################################################
@@ -422,8 +459,8 @@ def plot_histograms_and_regression(combined_data_points, depth_range, regression
             axes[2].plot(regression_points[:, 0], regression_points[:, 1], linestyle='--', color='blue', alpha=0.7, linewidth=2, label='Regression')
             axes[2].legend()
         axes[2].scatter(combined_data_points[:, 2], combined_data_points[:, 4], alpha=0.5, s=sizes)
-        axes[2].set_xlim(depth_min, depth_max)
-        axes[2].set_ylim(depth_map_min, depth_map_max)
+        axes[2].set_xlim(0.0, depth_max)
+        axes[2].set_ylim(0.0, depth_map_max)
         axes[2].set_xlabel('Depth')
         axes[2].set_ylabel('Depth Map Value')
         axes[2].set_title('Depth Map Value vs Depth')

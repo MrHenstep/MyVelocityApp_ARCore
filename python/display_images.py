@@ -8,13 +8,13 @@ FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Veloc
 # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250812_2_(frametiming)(outdoors)(motion)"
 # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250813_1_(5fps)(outside)"
 # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250818_1_(5fps)(outside)(tracking)"
-
+# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250819_1_(5fps)(car)(Ziggy)"
 
 ##################################################################################################################
 
 BATCH_NUMBER = 0
 CONFIDENCE_LEVEL = 0.75
-DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, 5.0)
+DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, 25.0)
 
 DEPTH_POINTS_INDICES = range(0, 100, 1)
 
