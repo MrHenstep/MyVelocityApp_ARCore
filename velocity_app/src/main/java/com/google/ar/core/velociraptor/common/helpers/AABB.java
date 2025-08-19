@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.google.ar.core.codelab.common.helpers;
+package com.google.ar.core.velociraptor.common.helpers;
 
 // An axis-aligned bounding box is defined by the minimum and maximum extends in each dimension.
 public class AABB {

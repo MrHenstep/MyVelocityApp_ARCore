@@ -3,7 +3,7 @@ import subprocess
 # Define the source path on the device and the destination on your PC
 directory_name = "exported"
 device_path = "/sdcard/Android/data/com.google.ar.core.codelab.rawdepth/files/" + directory_name    
-local_path = r"C:\Users\steph\Documents\Projects\AndroidStudioProjects\ARCore-velocity-app"
+local_path = r"C:\Users\steph\Documents\Projects\AndroidStudioProjects\Velociraptor-app"
 
 # run remote ls on the device to check if the path exists, print the output
 result = subprocess.run(["adb", "shell", "ls", device_path], capture_output=True, text=True)

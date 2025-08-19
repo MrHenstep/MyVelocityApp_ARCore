@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.google.ar.core.codelab.common.rendering;
+package com.google.ar.core.velociraptor.common.rendering;
 
 import android.content.Context;
 import android.opengl.GLES11Ext;

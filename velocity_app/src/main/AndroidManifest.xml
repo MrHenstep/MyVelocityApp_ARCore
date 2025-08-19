@@ -16,15 +16,18 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    package="com.google.ar.core.codelab.rawdepth">
+    package="com.google.ar.core.velociraptor.rawdepth">
 
   <uses-permission android:name="android.permission.CAMERA"/>
   <!-- This tag indicates that this application requires ARCore.  This results in the application
        only being visible in the Google Play Store on devices that support ARCore. -->
   <uses-feature android:name="android.hardware.camera.ar" android:required="true"/>
   <uses-feature android:glEsVersion="0x00020000" android:required="true" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
 
-  <application
+    <application
       android:allowBackup="false"
       android:icon="@drawable/ic_launcher"
       android:label="@string/app_name"
@@ -33,7 +36,7 @@
       tools:ignore="GoogleAppIndexingWarning">
 
     <activity
-        android:name=".RawDepthCodelabActivity"
+        android:name="com.google.ar.core.velociraptor.rawdepth.VelociraptorActivity"
         android:configChanges="orientation|screenSize"
         android:exported="true"
         android:theme="@style/Theme.AppCompat.NoActionBar"

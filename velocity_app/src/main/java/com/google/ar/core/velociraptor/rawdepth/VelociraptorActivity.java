@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.google.ar.core.codelab.rawdepth;
+package com.google.ar.core.velociraptor.rawdepth;
 
 import android.annotation.SuppressLint;
 import android.content.res.AssetFileDescriptor;
@@ -58,12 +58,12 @@ import com.google.ar.core.Config;
 
 import com.google.ar.core.Frame;
 import com.google.ar.core.Session;
-import com.google.ar.core.codelab.common.helpers.CameraPermissionHelper;
-import com.google.ar.core.codelab.common.helpers.DisplayRotationHelper;
-import com.google.ar.core.codelab.common.helpers.FullScreenHelper;
-import com.google.ar.core.codelab.common.helpers.SnackbarHelper;
+import com.google.ar.core.velociraptor.common.helpers.CameraPermissionHelper;
+import com.google.ar.core.velociraptor.common.helpers.DisplayRotationHelper;
+import com.google.ar.core.velociraptor.common.helpers.FullScreenHelper;
+import com.google.ar.core.velociraptor.common.helpers.SnackbarHelper;
 
-import com.google.ar.core.codelab.common.rendering.TextureRenderer;
+import com.google.ar.core.velociraptor.common.rendering.TextureRenderer;
 
 
 import com.google.ar.core.exceptions.CameraNotAvailableException;
@@ -106,10 +106,10 @@ import org.opencv.android.Utils;
 import org.opencv.imgproc.Imgproc;
 
 
-public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurfaceView.Renderer {
+public class VelociraptorActivity extends AppCompatActivity implements GLSurfaceView.Renderer {
 
 // <editor-fold desc="Member Variables">
-  private static final String TAG = RawDepthCodelabActivity.class.getSimpleName();
+  private static final String TAG = VelociraptorActivity.class.getSimpleName();
 
   // Views
   private GLSurfaceView glSurfaceView;  // needs to be resumed/paused etc. because it live on GL rendering thread
@@ -141,7 +141,7 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 
   // Constants determining collection
   private static final int FRAME_THROTTLE_INTERVAL = 6;
-  private static final int MAX_COLLECTED_FRAMES = 20;
+  private static final int MAX_COLLECTED_FRAMES = 10;
 
 
   private Button continueButton;
@@ -563,15 +563,18 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
               try {
                 PointTrackingState prevPointTrackingState = null;
                 for (int iFrame = 0; iFrame < snapshot.size(); ++iFrame) {
-                  CollectedSample sample = snapshot.get(iFrame);
-                  if (iFrame == 0) prevPointTrackingState = new PointTrackingState(sample.tap, null);
-
-                  prevPointTrackingState = processCollectedFrameData(sample.frame, iFrame, thisBatch, prevPointTrackingState, sample.tap);
 
                   final int frameNumber = iFrame;
                   runOnUiThread(() -> {
                     continueButton.setText("Processing: Batch " + thisBatch + " Frame " + frameNumber + "/" + (MAX_COLLECTED_FRAMES-1));
                   });
+
+                  CollectedSample sample = snapshot.get(iFrame);
+                  if (iFrame == 0) prevPointTrackingState = new PointTrackingState(sample.tap, null);
+
+                  prevPointTrackingState = processCollectedFrameData(sample.frame, iFrame, thisBatch, prevPointTrackingState, sample.tap);
+
+
                 }
               } finally {
                 processingFrames.set(false);
@@ -878,7 +881,7 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 
 // </editor-fold>
 
-// <editor-fold desc="Main runDepthEstimation method">
+// <editor-fold desc="Main processCollectedFrameData method">
   @SuppressLint("DefaultLocale")
   private PointTrackingState processCollectedFrameData(FrameData frameData, int frameNumber, int batchNumber, PointTrackingState prevState, PointF estimatedPoint) {
 
@@ -905,50 +908,50 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     int displayRotation = getWindowManager().getDefaultDisplay().getRotation();
     int rotationDegrees = getCameraImageRotationDegrees(this, displayRotation);
 
+    Log.i("ROTATION", String.format("Display: %d, Rotation: %d", displayRotation, rotationDegrees));
+
     Bitmap cameraBitmap = frameData.getCameraBitmap();
-    cameraBitmap = rotateBitmap(cameraBitmap, rotationDegrees);
 
     // -------------------------------------------------------------------------------------------------------------------
     // run depth estimation on the camera image
+
+    Bitmap rotatedCameraBitmap = rotateBitmap(cameraBitmap, rotationDegrees);;
+
     final int midasWidth = 256;
     final int midasHeight = 256;
-    Bitmap depthModelInputBitmap = Bitmap.createScaledBitmap(cameraBitmap, midasWidth, midasHeight, true);
+    Bitmap depthModelInputBitmap = Bitmap.createScaledBitmap(rotatedCameraBitmap, midasWidth, midasHeight, true);
 
     ByteBuffer inputBuffer = bitmapToByteBuffer(depthModelInputBitmap);           // convert bitmap to input buffer and create empty output buffer to write to
     float[][][][] outputBuffer = new float[1][256][256][1];
     tflite_interpreter.run(inputBuffer, outputBuffer);  // run MIDAS
 
-    ColourMapResult colourMapResult = createColorMappedBitmap(outputBuffer, midasWidth, midasHeight); // create coloured bitmap from Midas output buffer
+    ColourMapResult rotatedColourMapResult = createColorMappedBitmap(outputBuffer, midasWidth, midasHeight); // create coloured bitmap from Midas output buffer
 
-    final int imageWidth = cameraBitmap.getWidth();
-    final int imageHeight = cameraBitmap.getHeight();
-    Bitmap depthModelBitmapColour = Bitmap.createScaledBitmap(colourMapResult.colourBitmap, imageWidth, imageHeight, true);
-    Bitmap depthModelBitmapGrey = Bitmap.createScaledBitmap(colourMapResult.greyscaleBitmap, imageWidth, imageHeight, true);
+    final int imageWidth = rotatedCameraBitmap.getWidth();
+    final int imageHeight = rotatedCameraBitmap.getHeight();
+    Bitmap rotatedDepthModelBitmapColour = Bitmap.createScaledBitmap(rotatedColourMapResult.colourBitmap, imageWidth, imageHeight, true);
+    Bitmap rotatedDepthModelBitmapGrey = Bitmap.createScaledBitmap(rotatedColourMapResult.greyscaleBitmap, imageWidth, imageHeight, true);
 
-    // display the depth map as a transparent overlay over the camera image
-    Bitmap combinedBitmap = cameraBitmap.copy(Bitmap.Config.ARGB_8888, true);
-    Canvas canvas = new Canvas(combinedBitmap);
+    Bitmap depthModelBitmapColour = rotateBitmap(rotatedDepthModelBitmapColour, -rotationDegrees);
+    Bitmap depthModelBitmapGrey = rotateBitmap(rotatedDepthModelBitmapGrey, -rotationDegrees);
 
-    Paint transparentPaint = new Paint();
-    transparentPaint.setAlpha(128); // or tune as needed (0=transparent, 255=opaque)
-    canvas.drawBitmap(depthModelBitmapColour, 0, 0, transparentPaint);
+
 
     // -----------------------------------------------------------------------------------------------------
     // run point tracker
-    Log.i("processCollectedFrameData", String.format("Starting point tracking ..."));
-
     Mat newGrey = toGreyScaleMat(cameraBitmap);
     PointF newPoint = null;
     if (prevState != null && prevState.prevGrey != null) {
+      // normal operation - use the previous grey with the new one, and update the previous point
       newPoint = trackPoint(prevState.prevGrey, newGrey, prevState.prevPoint);
       newState = new PointTrackingState(newPoint, newGrey.clone());
     }
     else {
-      newState = new PointTrackingState(prevState.prevPoint, newGrey.clone());
+      // first call - no previous grey, so can't track, just update the prevState with the new one
+      PointF prevPointInCameraFrame = rotatePointF(prevState.prevPoint, -rotationDegrees, latestBitmapWidth, latestBitmapHeight);
+      newState = new PointTrackingState(prevPointInCameraFrame, newGrey.clone());
     }
     newGrey.release();
-
-    Log.i("processCollectedFrameData", String.format("... done"));
 
     // -----------------------------------------------------------------------------------------------------
     // now save all to file
@@ -963,7 +966,7 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     saveFloatArrayToBinary(timeStamps, String.format("batch_%d_timestamps_%d.bin", batchNumber, frameNumber));
     Log.i("CollectFrames", String.format("Saved timestamps for batch %d, frame %d", batchNumber, frameNumber));
 
-    // DEPTH POINTS
+    //     DEPTH POINTS
     if (transformedPoints4d != null) {
       saveFloatArrayToBinary(transformedPoints4d, String.format("batch_%d_depth_points_%d.bin", batchNumber, frameNumber));
       Log.i("CollectFrames", String.format("Saved depth points for batch %d, frame %d", batchNumber, frameNumber));
@@ -1003,12 +1006,12 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     saveFloatArrayToBinary(extrinsicMatrix, String.format("batch_%d_extrinsic_matrix_%d.bin", batchNumber, frameNumber));
 
     // TRACKED POINTS
-    float newX = (newPoint != null ? newPoint.x : Float.NaN);
-    float newY = (newPoint != null ? newPoint.y : Float.NaN);
-    float[] pointCoordinates = new float[] {estimatedPoint.x, estimatedPoint.y, newX, newY};
+    float newX = (newPoint != null ? newPoint.x : newState.prevPoint.x);
+    float newY = (newPoint != null ? newPoint.y : newState.prevPoint.y);
+    float[] pointCoordinates = new float[] {newX, newY, estimatedPoint.x, estimatedPoint.y};
     saveFloatArrayToBinary(pointCoordinates, String.format("batch_%d_tracked_point_%d.bin", batchNumber, frameNumber));
 
-    Log.i("processCollectedFrameData", String.format("tracked for batch %d, frame %d: %f, %f, %f, %f", batchNumber, frameNumber, estimatedPoint.x, estimatedPoint.y, newX, newY));
+    Log.i("processCollectedFrameData", String.format("tracked for batch %d, frame %d: %f, %f, %f, %f", batchNumber, frameNumber, newX, newY, estimatedPoint.x, estimatedPoint.y));
 
   }
   catch (Exception e) {
@@ -1130,6 +1133,24 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
 
     return 0;
   }
+
+
+  public static PointF rotatePointF(PointF p, int angleClockwise, int originalWidth, int originalHeight) {
+    int a = ((angleClockwise % 360) + 360) % 360;
+    switch (a) {
+      case 0:
+        return new PointF(p.x, p.y);
+      case 90:  // (x,y) -> (h-1 - y, x)
+        return new PointF(originalHeight - 1 - p.y, p.x);
+      case 180: // (x,y) -> (w-1 - x, h-1 - y)
+        return new PointF(originalWidth - 1 - p.x, originalHeight - 1 - p.y);
+      case 270: // (x,y) -> (y, w-1 - x)
+        return new PointF(p.y, originalWidth - 1 - p.x);
+      default:
+        throw new IllegalArgumentException("angleCW must be 0, 90, 180, or 270");
+    }
+  }
+
 
 // </editor-fold>
 

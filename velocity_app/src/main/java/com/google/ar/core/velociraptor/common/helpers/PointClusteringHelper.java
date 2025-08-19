@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.google.ar.core.codelab.common.helpers;
+package com.google.ar.core.velociraptor.common.helpers;
 
 import java.nio.FloatBuffer;
 import java.util.ArrayList;

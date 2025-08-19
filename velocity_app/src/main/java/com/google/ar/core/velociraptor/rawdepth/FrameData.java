@@ -1,9 +1,8 @@
-package com.google.ar.core.codelab.rawdepth;
+package com.google.ar.core.velociraptor.rawdepth;
 
 
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Color;
 import android.graphics.ImageFormat;
 import android.graphics.Rect;
 import android.graphics.YuvImage;
@@ -27,7 +26,7 @@ public class FrameData {
 
     //<editor-fold desc="FrameData member variables">
 
-    private static final String TAG = RawDepthCodelabActivity.class.getSimpleName();
+    private static final String TAG = VelociraptorActivity.class.getSimpleName();
 
     public ByteBuffer cameraBufferY;
     public ByteBuffer cameraBufferU;
@@ -324,7 +323,7 @@ public class FrameData {
         int numPoints = points.length / 4;
         transformedPoints = new float[points.length];
 
-        for (int i = 0; i < numPoints; i++) {
+        for (int i = 0; i < numPoints; ++i) {
             float u = points[i*4];
             float v = points[i * 4 + 1];
 

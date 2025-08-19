@@ -119,6 +119,9 @@ def get_matched_filenames(match_indices, directory, batch_number):
         depth_map_colour_file = f"batch_{batch_number}_depth_map_colour_{mm}.bin"
         depth_map_grey_file = f"batch_{batch_number}_depth_map_grey_{mm}.bin"
         tracked_point_file = f"batch_{batch_number}_tracked_point_{mm}.bin"
+        extrinsic_matrix_file = f"batch_{batch_number}_extrinsic_matrix_{mm}.bin"
+        texture_intrinsics_file = f"batch_{batch_number}_texture_intrinsics_{mm}.bin"
+        camera_intrinsics_file = f"batch_{batch_number}_camera_intrinsics_{mm}.bin"
 
         depth_points_path = os.path.join(directory, depth_points_file)
         confidence_points_path = os.path.join(directory, confidence_points_file)
@@ -126,6 +129,9 @@ def get_matched_filenames(match_indices, directory, batch_number):
         depth_map_colour_path = os.path.join(directory, depth_map_colour_file)
         depth_map_grey_path = os.path.join(directory, depth_map_grey_file)
         tracked_point_path = os.path.join(directory, tracked_point_file)
+        extrinsic_matrix_path = os.path.join(directory, extrinsic_matrix_file)
+        texture_intrinsics_path = os.path.join(directory, texture_intrinsics_file)
+        camera_intrinsics_path = os.path.join(directory, camera_intrinsics_file)
 
         depth_points_exists = depth_points_file if os.path.exists(depth_points_path) else "n/a"
         confidence_points_exists = confidence_points_file if os.path.exists(confidence_points_path) else "n/a"
@@ -133,8 +139,11 @@ def get_matched_filenames(match_indices, directory, batch_number):
         depth_map_colour_exists = depth_map_colour_file if os.path.exists(depth_map_colour_path) else "n/a"
         depth_map_grey_exists = depth_map_grey_file if os.path.exists(depth_map_grey_path) else "n/a"
         tracked_point_exists = tracked_point_file if os.path.exists(tracked_point_path) else "n/a"
+        extrinsic_matrix_exists = extrinsic_matrix_file if os.path.exists(extrinsic_matrix_path) else "n/a"
+        texture_intrinsics_exists = texture_intrinsics_file if os.path.exists(texture_intrinsics_path) else "n/a"
+        camera_intrinsics_exists = camera_intrinsics_file if os.path.exists(camera_intrinsics_path) else "n/a"
 
-        filename_table.append([depth_points_exists, depth_map_camera_exists, depth_map_colour_exists, depth_map_grey_exists, confidence_points_exists, tracked_point_exists])
+        filename_table.append([depth_points_exists, depth_map_camera_exists, depth_map_colour_exists, depth_map_grey_exists, confidence_points_exists, tracked_point_exists, extrinsic_matrix_exists, texture_intrinsics_exists, camera_intrinsics_exists])
 
     return filename_table
 
@@ -167,9 +176,10 @@ def get_depth_map_data(file_path, file_name):
 
     return data_reshaped
 
-def get_depth_map_bitmap(data, overlay_points=None, tracked_points=None, depth_range=(0.0, 5.0), colour_map='inferno'):
-    num_rows = 640
-    num_cols = 480
+def get_depth_map_bitmap(data, depth_points=None, tracked_points=None, depth_range=(0.0, 5.0), colour_map='inferno', rotation=90):
+
+    num_cols = 640
+    num_rows = 480
 
     depth_min = depth_range[0]
     depth_max = depth_range[1]
@@ -182,25 +192,24 @@ def get_depth_map_bitmap(data, overlay_points=None, tracked_points=None, depth_r
 
     if data is not None:
         for row in data:
-            y, x, a, r, g, b = row
+            x, y, a, r, g, b = row
             xi, yi = int(x), int(y)
-            if 0 <= yi < num_cols and 0 <= xi < num_rows:
-                rgb_img[xi, yi, 0] = r
-                rgb_img[xi, yi, 1] = g
-                rgb_img[xi, yi, 2] = b
+            if 0 <= xi < num_cols and 0 <= yi < num_rows:
+                rgb_img[yi, xi, 0] = r
+                rgb_img[yi, xi, 1] = g
+                rgb_img[yi, xi, 2] = b
 
         # If values are in 0-255, normalize to 0-1
         if rgb_img.max() > 1.0:
             rgb_img = rgb_img / 255.0
 
-    # Overlay points if provided
-    if overlay_points is not None and len(overlay_points) > 0:
-        xs = overlay_points[:, 1].astype(int)
-        ys = overlay_points[:, 0].astype(int)
-        values = overlay_points[:, 2]
+    # # Overlay points if provided
+    if depth_points is not None and len(depth_points) > 0:
+        xs = depth_points[:, 0].astype(int)
+        ys = depth_points[:, 1].astype(int)
+        values = depth_points[:, 2]
 
         # Normalize values to [0, 1] for color mapping
-        # norm_values = 1.0 - (values - np.min(values)) / (np.ptp(values) + 1e-8)
         norm_values = 1.0 - (values - depth_min) / (depth_max - depth_min + 1e-8)
         norm_values = np.clip(norm_values, 0.0, 1.0)
         cmap = plt.get_cmap(colour_map)
@@ -213,11 +222,11 @@ def get_depth_map_bitmap(data, overlay_points=None, tracked_points=None, depth_r
                     for dy in range(-1, 2):
                         nx, ny = x + dx, y + dy
                         if 0 <= nx < num_cols and 0 <= ny < num_rows:
-                            rgb_img[ny, num_cols - nx] = color
+                            rgb_img[ny, nx] = color
 
     # Tracked points if provided
     if tracked_points is not None and len(tracked_points) > 0:
-        xs = num_cols - tracked_points[:, 0].astype(int)  # because of different coordinate systems
+        xs = tracked_points[:, 0].astype(int)  # because of different coordinate systems
         ys = tracked_points[:, 1].astype(int)
 
         # Draw a blue circle centered at each tracked point
@@ -232,11 +241,31 @@ def get_depth_map_bitmap(data, overlay_points=None, tracked_points=None, depth_r
                         if radius - thickness <= dist <= radius + 0.5:
                             nx, ny = x + dx, y + dy
                             if 0 <= nx < num_cols and 0 <= ny < num_rows:
-                                rgb_img[ny, num_cols - nx] = [1.0, 1.0, 1.0]
+                                rgb_img[ny, nx] = [1.0, 1.0, 1.0]
 
     # Convert to uint8 bitmap
-    depth_map_bitmap = (rgb_img * 255).astype(np.uint8)
+
+    rotated_img = rotate_rgb_img(rgb_img, rotation)
+    depth_map_bitmap = (rotated_img * 255).astype(np.uint8)
     return depth_map_bitmap
+
+def rotate_rgb_img(rgb_img, rotation_deg):
+    """
+    Rotate an RGB image array (H, W, 3) by multiples of 90 degrees.
+    rotation_deg can be 0, 90, -90, 180, or 270.
+    Returns a new rotated array.
+    """
+    r = rotation_deg % 360
+    if r == 0:
+        return rgb_img
+    elif r == 90:           # clockwise 90°
+        return np.rot90(rgb_img, k=3)  # rot90 is counter-clockwise
+    elif r == 180:
+        return np.rot90(rgb_img, k=2)
+    elif r == 270 or rotation_deg == -90:
+        return np.rot90(rgb_img, k=1)
+    else:
+        raise ValueError("rotation_deg must be one of {0, 90, -90, 180, 270}")
 
 def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range):
 
@@ -251,9 +280,9 @@ def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range)
     # DEPTH POINTS
     if row[0] != "n/a":
         points = read_float_data_as_nx4(file_path, row[0], confidence_level)
-        depth_points_bitmap = get_depth_map_bitmap(data=None, overlay_points=points, depth_range=depth_range)
+        depth_points_bitmap = get_depth_map_bitmap(data=None, depth_points=points, depth_range=depth_range)
     else:
-        depth_points_bitmap = get_depth_map_bitmap(data=None, overlay_points=None)
+        depth_points_bitmap = get_depth_map_bitmap(data=None, depth_points=None)
 
     # CAMERA IMAGE
     if row[1] != "n/a":
@@ -261,9 +290,9 @@ def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range)
         depth_map_camera = get_depth_map_data(file_path, row[1])
         if row[5] != "n/a":
             tracked_points = read_float_data_as_nx4(file_path, row[5])
-            depth_map_camera_bitmap = get_depth_map_bitmap(depth_map_camera, overlay_points=points, tracked_points=tracked_points, depth_range=depth_range)
+            depth_map_camera_bitmap = get_depth_map_bitmap(depth_map_camera, depth_points=points, tracked_points=tracked_points, depth_range=depth_range)
         else:
-            depth_map_camera_bitmap = get_depth_map_bitmap(depth_map_camera, overlay_points=points, depth_range=depth_range)
+            depth_map_camera_bitmap = get_depth_map_bitmap(depth_map_camera, depth_points=points, depth_range=depth_range)
     else:
         depth_map_camera_bitmap = get_depth_map_bitmap(None)
 
@@ -277,10 +306,10 @@ def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range)
     # CONFIDENCE POINTS
     if row[4] != "n/a":
         confidence_points = read_float_data_as_nx4(file_path, row[4])
-        confidence_points_bitmap = get_depth_map_bitmap(data=None, depth_range=(0.0, 1.0), overlay_points=confidence_points, colour_map='Greys')
+        confidence_points_bitmap = get_depth_map_bitmap(data=None, depth_range=(0.0, 1.0), depth_points=confidence_points, colour_map='Greys')
         overlay_points = confidence_points
     else:
-        confidence_points_bitmap = get_depth_map_bitmap(data=None, overlay_points=None)
+        confidence_points_bitmap = get_depth_map_bitmap(data=None, depth_points=None)
 
     return depth_points_bitmap, depth_map_camera_bitmap, depth_map_colour_bitmap, confidence_points_bitmap
 
@@ -301,9 +330,9 @@ def get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, co
     for i_point in range(num_points):
         y, x = combined_data_points[i_point, :2]
         xi, yi = int(x), int(y)
-        # width=640
-        height=480
-        index = xi + yi * height
+        
+        width=480
+        index = xi + yi * width
         # print(i_point, (xi, yi, depth_map_data[index, 3]))
         # if 0 <= xi < depth_map_data.shape[0] and 0 <= yi < depth_map_data.shape[1]:
         combined_data_points[i_point, 4] = depth_map_data[index, 3]
@@ -434,9 +463,9 @@ if (__name__ == "__main__"):
 
     ##########################################################################################################
 
-    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250812_1_(frametiming)(indoors)(motion)"
-    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250812_2_(frametiming)(outdoors)(motion)"
-    FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\ARCore-velocity-app\\exported\\20250813_1_(5fps)(outside)"
+    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250812_1_(frametiming)(indoors)(motion)"
+    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250812_2_(frametiming)(outdoors)(motion)"
+    FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250813_1_(5fps)(outside)"
 
 
     ##################################################################################################################
