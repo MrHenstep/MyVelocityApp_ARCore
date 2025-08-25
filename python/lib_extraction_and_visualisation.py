@@ -167,7 +167,7 @@ def read_float_data_as_nx4(file_path, file_name, confidence_level=None):
     return data_reshaped
 
 
-def get_depth_map_data(file_path, file_name):
+def read_float_data_as_nx6(file_path, file_name):
     # Load raw binary float32 data, little-endian
     data = np.fromfile(file_path + "/" + file_name, dtype='<f4')  # '<f4' = little-endian float32
 
@@ -287,7 +287,7 @@ def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range)
     # CAMERA IMAGE
     if row[1] != "n/a":
         points = read_float_data_as_nx4(file_path, row[0])
-        depth_map_camera = get_depth_map_data(file_path, row[1])
+        depth_map_camera = read_float_data_as_nx6(file_path, row[1])
         if row[5] != "n/a":
             tracked_points = read_float_data_as_nx4(file_path, row[5])
             depth_map_camera_bitmap = get_depth_map_bitmap(depth_map_camera, depth_points=points, tracked_points=tracked_points, depth_range=depth_range)
@@ -298,7 +298,7 @@ def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range)
 
     # DEPTH MAP
     if row[3] != "n/a":
-        depth_map = get_depth_map_data(file_path, row[3])
+        depth_map = read_float_data_as_nx6(file_path, row[3])
         depth_map_colour_bitmap = get_depth_map_bitmap(depth_map, overlay_points, depth_range=depth_range)
     else:
         depth_map_colour_bitmap = get_depth_map_bitmap(None)
@@ -320,69 +320,65 @@ def get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, co
     Assumes depth_map_data rows are [x, y, a, r, g, b] and r=g=b (greyscale).
     """
     # Load [x, y, depth, conf]
-    points = read_float_data_as_nx4(file_path, depth_points_file, confidence_level)
-    if points.size == 0:
+    depth_points = read_float_data_as_nx4(file_path, depth_points_file, confidence_level)
+    if depth_points.size == 0:
         return np.zeros((0, 5), dtype=np.float32)
 
     # Output buffer
-    num_points = points.shape[0]
+    num_points = depth_points.shape[0]
     combined = np.empty((num_points, 5), dtype=np.float32)
-    combined[:, :4] = points[:, :4]
+    combined[:, :4] = depth_points[:, :4]
     combined[:, 4] = np.nan  # default: NaN if no valid map lookup
 
     # Load per-pixel depth map data [x, y, a, r, g, b] flattened row-major
-    dm = get_depth_map_data(file_path, depth_map_file)
+    depth_map = read_float_data_as_nx6(file_path, depth_map_file)
 
     # Integer pixel coords (nearest-neighbour). Use truncation for speed.
-    xi = points[:, 0].astype(np.int32)
-    yi = points[:, 1].astype(np.int32)
+    xi = depth_points[:, 0].astype(np.int32)
+    yi = depth_points[:, 1].astype(np.int32)
 
     # In-bounds mask
-    inb = (xi >= 0) & (xi < width) & (yi >= 0) & (yi < height)
-    if not np.any(inb):
+    inbounds = (xi >= 0) & (xi < width) & (yi >= 0) & (yi < height)
+    if not np.any(inbounds):
         return combined
 
     # Row-major flat indices
-    flat = yi[inb] * width + xi[inb]
+    index = yi[inbounds] * width + xi[inbounds]
 
     # Use r channel only (greyscale assumption r=g=b)
-    combined[inb, 4] = dm[flat, 3].astype(np.float32)
+    combined[inbounds, 4] = depth_map[index, 3].astype(np.float32)
 
     return combined
 
-# def get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, confidence_level):
 
-#     points = read_float_data_as_nx4(file_path, depth_points_file, confidence_level)
-
-#     num_points = points.shape[0]
-
-#     combined_data_points = np.zeros((num_points, 5), dtype=np.float32)
-
-#     combined_data_points[:,:2] = points[:,:2]  # x, y
-#     combined_data_points[:, 2] = points[:, 2]   # depth
-#     combined_data_points[:, 3] = points[:, 3]  # confidence
-
-#     depth_map_data = get_depth_map_data(file_path, depth_map_file)
-
-#     for i_point in range(num_points):
-#         x, y = combined_data_points[i_point, :2]
-#         xi, yi = int(x), int(y)
-        
-#         # width=640
-#         index = xi + yi * 640
-#         # print(i_point, (xi, yi, depth_map_data[index, 3]))
-#         # if 0 <= xi < depth_map_data.shape[0] and 0 <= yi < depth_map_data.shape[1]:
-#         combined_data_points[i_point, 4] = depth_map_data[index, 3]
-
-#     return combined_data_points
 
 
 #######################################################################################################################
 ### display & visualisation
 
-def plot_points_and_images(depth_points_bitmap, depth_map_camera_bitmap, depth_map_colour_bitmap, confidence_points_bitmap):
+def plot_points_and_images(depth_points_bitmap, depth_map_camera_bitmap, depth_map_colour_bitmap, confidence_points_bitmap, rotation_deg):
+    # Rotate all images by the specified angle
+    def rotate_img(img, rotation_deg):
+        if img is None:
+            return img
+        r = rotation_deg % 360
+        if r == 0:
+            return img
+        elif r == 90:
+            return np.rot90(img, k=3)
+        elif r == 180:
+            return np.rot90(img, k=2)
+        elif r == 270 or rotation_deg == -90:
+            return np.rot90(img, k=1)
+        else:
+            raise ValueError("rotation_deg must be one of {0, 90, -90, 180, 270}")
 
-    # Display the two bitmaps side by side
+    depth_points_bitmap = rotate_img(depth_points_bitmap, rotation_deg)
+    depth_map_camera_bitmap = rotate_img(depth_map_camera_bitmap, rotation_deg)
+    depth_map_colour_bitmap = rotate_img(depth_map_colour_bitmap, rotation_deg)
+    confidence_points_bitmap = rotate_img(confidence_points_bitmap, rotation_deg)
+
+    # Display the four bitmaps side by side
     fig, axes = plt.subplots(1, 4, figsize=(25, 5))
     axes[0].imshow(depth_points_bitmap)
     axes[0].set_title('Depth Points Bitmap')
@@ -395,7 +391,7 @@ def plot_points_and_images(depth_points_bitmap, depth_map_camera_bitmap, depth_m
     plt.tight_layout()
     plt.show()
 
-def batch_display_points_and_images(file_path, collated_table, confidence_level, timestamps_array=None, match_indices=None, depth_points_indices=None, depth_range=(0.0, 5.0)):
+def batch_display_points_and_images(file_path, collated_table, confidence_level, timestamps_array=None, match_indices=None, depth_points_indices=None, depth_range=(0.0, 5.0), rotation_deg=0):
 
     for i_row, row in enumerate(collated_table):
 
@@ -412,7 +408,7 @@ def batch_display_points_and_images(file_path, collated_table, confidence_level,
 
         depth_points_bitmap, depth_map_camera_bitmap, depth_map_grey_bitmap, confidence_points_bitmap = get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range)
 
-        plot_points_and_images(depth_points_bitmap, depth_map_camera_bitmap, depth_map_grey_bitmap, confidence_points_bitmap)
+        plot_points_and_images(depth_points_bitmap, depth_map_camera_bitmap, depth_map_grey_bitmap, confidence_points_bitmap, rotation_deg)
 
         print(row)
         print(f"ABS: Row {i_row}: Frame ts {timestamps_array[indices[1], 1]:.6f}, Camera ts {timestamps_array[indices[1], 2]:.6f}, Depth ts {timestamps_array[indices[0], 3]:.6f}, Confidence ts {timestamps_array[indices[1], 4]:.6f}")

@@ -80,6 +80,7 @@ import java.io.IOException;
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 // Import necessary classes
@@ -133,7 +134,8 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 
   // The Midas-2.0 nana model for relative depth
   private Interpreter tflite_interpreter;
-  private static final String MODEL_PATH = "midas_nano.tflite"; // Replace with your model filename
+//  private static final String MODEL_PATH = "midas_nano.tflite"; // Replace with your model filename
+  private static final String MODEL_PATH = "Midas-V2.tflite";
 
   //  private long lastProcessedTimestampNanos = 0;
   private int numFramesCollected = 0;
@@ -141,8 +143,10 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 
   // Constants determining collection
   private static final int FRAME_THROTTLE_INTERVAL = 6;
-  private static final int MAX_COLLECTED_FRAMES = 10;
+  private static final int MAX_COLLECTED_FRAMES = 2;
 
+  // options for putting 4:3 camera image bitmap into Midas 256x256
+  private static final boolean CROP_NOT_COMPRESS = true;
 
   private Button continueButton;
 //  private final Object continueLock = new Object();
@@ -213,7 +217,17 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 
     // (try to) load the model
     try {
-      tflite_interpreter = new Interpreter(loadModelFile(this));
+      Interpreter.Options opts = new Interpreter.Options();
+      opts.setUseNNAPI(false);
+      opts.setNumThreads(1);
+
+      tflite_interpreter = new Interpreter(loadModelFile(this), opts);
+      int[] inShape = tflite_interpreter.getInputTensor(0).shape();    // expect [1,256,256,3]
+      int[] outShape = tflite_interpreter.getOutputTensor(0).shape();  // expect [1,256,256,1]
+      Log.i("TFLiteIO", "in=" + Arrays.toString(inShape) + " out=" + Arrays.toString(outShape));
+      Log.i("TFLiteInfo", tflite_interpreter.getInputTensor(0).name());
+      Log.i("TFLiteInfo", tflite_interpreter.getOutputTensor(0).name());
+
     } catch (IOException e) {
       Log.e("TFLite", "Error loading TFLite model: ", e);
     }
@@ -830,7 +844,7 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     return overlayBitmap;
   }
 
-  private static ColourMapResult createColorMappedBitmap(float[][][][] depth, int width, int height) {
+  private static DepthMapResult createColorMappedBitmap(float[][][][] depth, int width, int height) {
     float min = Float.MAX_VALUE;
     float max = Float.MIN_VALUE;
 
@@ -860,14 +874,14 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
       }
     }
 
-    return new ColourMapResult(bitmap, greyscaleBitmap);
+    return new DepthMapResult(bitmap, greyscaleBitmap);
   }
 
-  public static class ColourMapResult {
+  public static class DepthMapResult {
     public final Bitmap colourBitmap;
     public final Bitmap greyscaleBitmap;
 
-    public ColourMapResult(Bitmap colorBitmap, Bitmap greyscaleBitmap) {
+    public DepthMapResult(Bitmap colorBitmap, Bitmap greyscaleBitmap) {
       this.colourBitmap = colorBitmap;
       this.greyscaleBitmap = greyscaleBitmap;
     }
@@ -908,7 +922,7 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     int displayRotation = getWindowManager().getDefaultDisplay().getRotation();
     int rotationDegrees = getCameraImageRotationDegrees(this, displayRotation);
 
-    Log.i("ROTATION", String.format("Display: %d, Rotation: %d", displayRotation, rotationDegrees));
+    Log.i("processCollectedFrameData", String.format("Display: %d, Rotation: %d", displayRotation, rotationDegrees));
 
     Bitmap cameraBitmap = frameData.getCameraBitmap();
 
@@ -919,21 +933,85 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 
     final int midasWidth = 256;
     final int midasHeight = 256;
-    Bitmap depthModelInputBitmap = Bitmap.createScaledBitmap(rotatedCameraBitmap, midasWidth, midasHeight, true);
 
-    ByteBuffer inputBuffer = bitmapToByteBuffer(depthModelInputBitmap);           // convert bitmap to input buffer and create empty output buffer to write to
+    // coerce image bitmap into a square bitmap for Midas
+//    Bitmap depthModelInputBitmap = null;
+//    int croppedBitmapSize;
+//    if (CROP_NOT_COMPRESS) {
+//      depthModelInputBitmap = cropCenterSquare(rotatedCameraBitmap);
+//      croppedBitmapSize = depthModelInputBitmap.getWidth();
+//      depthModelInputBitmap = Bitmap.createScaledBitmap(depthModelInputBitmap, midasWidth, midasHeight, true);
+//    }
+//    else {
+//      depthModelInputBitmap = Bitmap.createScaledBitmap(rotatedCameraBitmap, midasWidth, midasHeight, true);
+//    }
+//
+//    // convert sqaure bitmap into buffer and run Midas
+//    ByteBuffer inputBuffer = bitmapToByteBuffer(depthModelInputBitmap);           // convert bitmap to input buffer and create empty output buffer to write to
+
+    Bitmap squareCrop;
+    int croppedBitmapSize;
+    if (CROP_NOT_COMPRESS) {
+      squareCrop = cropCenterSquare(rotatedCameraBitmap);
+      croppedBitmapSize = squareCrop.getWidth();
+    } else {
+      // make a centered square first to be consistent with PC path
+      squareCrop = cropCenterSquare(rotatedCameraBitmap);
+      croppedBitmapSize = squareCrop.getWidth();
+    }
+
+// Convert squareCrop -> float RGB in [0,1]
+    int S = squareCrop.getWidth();
+    float[][][] rgbSquare = new float[S][S][3];
+    for (int y = 0; y < S; y++) {
+      for (int x = 0; x < S; x++) {
+        int p = squareCrop.getPixel(x, y);
+        rgbSquare[y][x][0] = ((p >> 16) & 0xFF) / 255f;
+        rgbSquare[y][x][1] = ((p >> 8)  & 0xFF) / 255f;
+        rgbSquare[y][x][2] = ( p        & 0xFF) / 255f;
+      }
+    }
+
+// Resize with align_corners = false to 256×256 (PyTorch-equivalent grid)
+    float[][][] rgb256 = resizeRgbAlignCornersFalse(rgbSquare, 256, 256);
+
+// Pack with ImageNet mean/std
+    ByteBuffer inputBuffer = rgbFloatToInputBuffer(rgb256);
+
     float[][][][] outputBuffer = new float[1][256][256][1];
     tflite_interpreter.run(inputBuffer, outputBuffer);  // run MIDAS
 
-    ColourMapResult rotatedColourMapResult = createColorMappedBitmap(outputBuffer, midasWidth, midasHeight); // create coloured bitmap from Midas output buffer
+    // convert output buffer into bitmaps (colour, grey)
 
     final int imageWidth = rotatedCameraBitmap.getWidth();
     final int imageHeight = rotatedCameraBitmap.getHeight();
-    Bitmap rotatedDepthModelBitmapColour = Bitmap.createScaledBitmap(rotatedColourMapResult.colourBitmap, imageWidth, imageHeight, true);
-    Bitmap rotatedDepthModelBitmapGrey = Bitmap.createScaledBitmap(rotatedColourMapResult.greyscaleBitmap, imageWidth, imageHeight, true);
 
-    Bitmap depthModelBitmapColour = rotateBitmap(rotatedDepthModelBitmapColour, -rotationDegrees);
-    Bitmap depthModelBitmapGrey = rotateBitmap(rotatedDepthModelBitmapGrey, -rotationDegrees);
+    Bitmap rotatedDepthMapResultColour = null;
+    Bitmap rotatedDepthMapResultGrey = null;
+
+    if (CROP_NOT_COMPRESS) {
+
+      float[][][][] depthResized = bilinearResizeAlignCornersFalse(outputBuffer, croppedBitmapSize, croppedBitmapSize);
+
+      DepthMapResult rotatedDepthMapResult = createColorMappedBitmap(depthResized, croppedBitmapSize, croppedBitmapSize);
+
+      rotatedDepthMapResultColour = pasteSquareIntoBlackFrame(rotatedDepthMapResult.colourBitmap, imageWidth, imageHeight);
+      rotatedDepthMapResultGrey   = pasteSquareIntoBlackFrame(rotatedDepthMapResult.greyscaleBitmap, imageWidth, imageHeight);
+
+//      Bitmap colourSquare = Bitmap.createScaledBitmap(rotatedDepthMapResult.colourBitmap, croppedBitmapSize, croppedBitmapSize, true);
+//      Bitmap greySquare = Bitmap.createScaledBitmap(rotatedDepthMapResult.greyscaleBitmap, croppedBitmapSize, croppedBitmapSize, true);
+//      rotatedDepthMapResultColour = pasteSquareIntoBlackFrame(colourSquare, imageWidth, imageHeight);
+//      rotatedDepthMapResultGrey = pasteSquareIntoBlackFrame(greySquare, imageWidth, imageHeight);
+    }
+    else{
+      DepthMapResult rotatedDepthMapResult = createColorMappedBitmap(outputBuffer, midasWidth, midasHeight); // create coloured bitmap from Midas output buffer, croppedBitmapSize); // create coloured bitmap from Midas output buffer
+      rotatedDepthMapResultColour = Bitmap.createScaledBitmap(rotatedDepthMapResult.colourBitmap, imageWidth, imageHeight, true);
+      rotatedDepthMapResultGrey = Bitmap.createScaledBitmap(rotatedDepthMapResult.greyscaleBitmap, imageWidth, imageHeight, true);
+
+    }
+
+    Bitmap depthModelBitmapColour = rotateBitmap(rotatedDepthMapResultColour, -rotationDegrees);
+    Bitmap depthModelBitmapGrey = rotateBitmap(rotatedDepthMapResultGrey, -rotationDegrees);
 
 
 
@@ -964,28 +1042,28 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
             frameData.confidenceTimestamp - frameData.baseTimestamp
     };
     saveFloatArrayToBinary(timeStamps, String.format("batch_%d_timestamps_%d.bin", batchNumber, frameNumber));
-    Log.i("CollectFrames", String.format("Saved timestamps for batch %d, frame %d", batchNumber, frameNumber));
+    Log.i("processCollectedFrameData", String.format("Saved timestamps for batch %d, frame %d", batchNumber, frameNumber));
 
     //     DEPTH POINTS
     if (transformedPoints4d != null) {
       saveFloatArrayToBinary(transformedPoints4d, String.format("batch_%d_depth_points_%d.bin", batchNumber, frameNumber));
-      Log.i("CollectFrames", String.format("Saved depth points for batch %d, frame %d", batchNumber, frameNumber));
+      Log.i("processCollectedFrameData", String.format("Saved depth points for batch %d, frame %d", batchNumber, frameNumber));
     }
 
     // CAMERA IMAGE
     float[] cameraBitmapFloatArray = convertBitmapToFloatPointsArray(cameraBitmap);
     saveFloatArrayToBinary(cameraBitmapFloatArray, String.format("batch_%d_depth_map_camera_%d.bin", batchNumber, frameNumber));
-    Log.i("CollectFrames", String.format("Saved depth map camera for batch %d, frame %d", batchNumber, frameNumber));
+    Log.i("processCollectedFrameData", String.format("Saved depth map camera for batch %d, frame %d", batchNumber, frameNumber));
 
     // COLOUR DEPTH MAP
     float[] colourBitmapFloatArray = convertBitmapToFloatPointsArray(depthModelBitmapColour);
     saveFloatArrayToBinary(colourBitmapFloatArray, String.format("batch_%d_depth_map_colour_%d.bin", batchNumber, frameNumber));
-    Log.i("CollectFrames", String.format("Saved depth map colour for batch %d, frame %d", batchNumber, frameNumber));
+    Log.i("processCollectedFrameData", String.format("Saved depth map colour for batch %d, frame %d", batchNumber, frameNumber));
 
     // GREYSCALE DEPTH MAP based on reciprocal depth
     float[] greyBitmapFloatArray = convertBitmapToFloatPointsArray(depthModelBitmapGrey);
     saveFloatArrayToBinary(greyBitmapFloatArray, String.format("batch_%d_depth_map_grey_%d.bin", batchNumber, frameNumber));
-    Log.i("CollectFrames", String.format("Saved depth map grey for batch %d, frame %d", batchNumber, frameNumber));
+    Log.i("processCollectedFrameData", String.format("Saved depth map grey for batch %d, frame %d", batchNumber, frameNumber));
 
     // CONFIDENCE POINTS
     if (transformedConfidencePoints4d != null) {
@@ -1163,16 +1241,28 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     long declaredLength = fileDescriptor.getDeclaredLength();
     return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength);
   }
+
   private ByteBuffer bitmapToByteBuffer(Bitmap bitmap) {
+
+    // ImageNet mean/std used on Python side
+    final float meanR = 0.485f, meanG = 0.456f, meanB = 0.406f;
+    final float stdR  = 0.229f, stdG  = 0.224f, stdB  = 0.225f;
 
     ByteBuffer inputBuffer = ByteBuffer.allocateDirect(1 * 256 * 256 * 3 * 4); // 1 image, 256x256, 3 channels, 4 bytes per float
     inputBuffer.order(ByteOrder.nativeOrder());
     for (int y = 0; y < 256; y++) {
       for (int x = 0; x < 256; x++) {
         int pixel = bitmap.getPixel(x, y);
-        inputBuffer.putFloat(((pixel >> 16) & 0xFF) / 255f); // R
-        inputBuffer.putFloat(((pixel >> 8) & 0xFF) / 255f);  // G
-        inputBuffer.putFloat((pixel & 0xFF) / 255f);         // B
+
+        float r = ((pixel >> 16) & 0xFF) / 255f;
+        float g = ((pixel >>  8) & 0xFF) / 255f;
+        float b = ( pixel        & 0xFF) / 255f;
+
+        // Match Python: (x - mean) / std, in RGB order
+        inputBuffer.putFloat((r - meanR) / stdR);
+        inputBuffer.putFloat((g - meanG) / stdG);
+        inputBuffer.putFloat((b - meanB) / stdB);
+
       }
     }
 
@@ -1274,6 +1364,123 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     return Color.argb(255, ri, gi, bi);
   }
 // </editor-fold>
+
+// <editor-fold desc="Helper methods - bitmaps">
+
+  public static Bitmap cropCenterSquare(Bitmap src) {
+    if (src == null) throw new IllegalArgumentException("src == null");
+    int w = src.getWidth();
+    int h = src.getHeight();
+    int size = Math.min(w, h);
+    int left = (w - size) / 2;
+    int top  = (h - size) / 2;
+    // Returns an immutable square bitmap cropped from the center
+    return Bitmap.createBitmap(src, left, top, size, size);
+  }
+
+  public static Bitmap pasteSquareIntoBlackFrame(Bitmap square, int width, int height) {
+    if (square == null) throw new IllegalArgumentException("square == null");
+//    final int outW = 480, outH = 640;
+
+    // Ensure a renderable config; ARGB_8888 is safest.
+    Bitmap.Config cfg = square.getConfig() != null ? square.getConfig() : Bitmap.Config.ARGB_8888;
+    Bitmap out = Bitmap.createBitmap(width, height, cfg);
+
+    Canvas c = new Canvas(out);
+    c.drawColor(Color.BLACK);
+
+    int x = (width - square.getWidth()) / 2;
+    int y = (height - square.getHeight()) / 2;
+
+    // Draw centered; no scaling, just a straight paste.
+    c.drawBitmap(square, x, y, /*paint=*/null);
+    return out;
+  }
+
+  // Bilinear resize for NHWC [1,H,W,1] with align_corners = false
+  private static float[][][][] bilinearResizeAlignCornersFalse(float[][][][] src, int newW, int newH) {
+    final int srcH = src[0].length;
+    final int srcW = src[0][0].length;
+    float[][][][] dst = new float[1][newH][newW][1];
+
+    for (int y = 0; y < newH; y++) {
+      // PyTorch grid: align_corners=False
+      float gy = ((y + 0.5f) * srcH / (float) newH) - 0.5f;
+      int y0 = (int) Math.floor(gy);
+      int y1 = y0 + 1;
+      float wy = gy - y0;
+      if (y0 < 0) { y0 = 0; y1 = 0; wy = 0f; }
+      if (y1 >= srcH) { y1 = srcH - 1; y0 = y1; wy = 0f; }
+
+      for (int x = 0; x < newW; x++) {
+        float gx = ((x + 0.5f) * srcW / (float) newW) - 0.5f;
+        int x0 = (int) Math.floor(gx);
+        int x1 = x0 + 1;
+        float wx = gx - x0;
+        if (x0 < 0) { x0 = 0; x1 = 0; wx = 0f; }
+        if (x1 >= srcW) { x1 = srcW - 1; x0 = x1; wx = 0f; }
+
+        float v00 = src[0][y0][x0][0];
+        float v01 = src[0][y0][x1][0];
+        float v10 = src[0][y1][x0][0];
+        float v11 = src[0][y1][x1][0];
+
+        float v0 = v00 + wx * (v01 - v00);
+        float v1 = v10 + wx * (v11 - v10);
+        dst[0][y][x][0] = v0 + wy * (v1 - v0);
+      }
+    }
+    return dst;
+  }
+
+  // Resize RGB float tensor [H,W,3] -> [256,256,3] with align_corners = false (PyTorch grid)
+  private static float[][][] resizeRgbAlignCornersFalse(float[][][] src, int newW, int newH) {
+    int srcH = src.length, srcW = src[0].length;
+    float[][][] dst = new float[newH][newW][3];
+    for (int y = 0; y < newH; y++) {
+      float gy = ((y + 0.5f) * srcH / (float)newH) - 0.5f;
+      int y0 = (int)Math.floor(gy), y1 = y0 + 1;
+      float wy = gy - y0;
+      if (y0 < 0) { y0 = 0; y1 = 0; wy = 0f; }
+      if (y1 >= srcH) { y1 = srcH - 1; y0 = y1; wy = 0f; }
+      for (int x = 0; x < newW; x++) {
+        float gx = ((x + 0.5f) * srcW / (float)newW) - 0.5f;
+        int x0 = (int)Math.floor(gx), x1 = x0 + 1;
+        float wx = gx - x0;
+        if (x0 < 0) { x0 = 0; x1 = 0; wx = 0f; }
+        if (x1 >= srcW) { x1 = srcW - 1; x0 = x1; wx = 0f; }
+
+        for (int c = 0; c < 3; c++) {
+          float v00 = src[y0][x0][c], v01 = src[y0][x1][c];
+          float v10 = src[y1][x0][c], v11 = src[y1][x1][c];
+          float v0 = v00 + wx * (v01 - v00);
+          float v1 = v10 + wx * (v11 - v10);
+          dst[y][x][c] = v0 + wy * (v1 - v0);
+        }
+      }
+    }
+    return dst;
+  }
+
+  // Pack RGB floats (NHWC, [0,1]) to TFLite input with ImageNet mean/std
+  private static ByteBuffer rgbFloatToInputBuffer(float[][][] rgb) {
+    final float meanR=0.485f, meanG=0.456f, meanB=0.406f;
+    final float stdR =0.229f, stdG =0.224f, stdB =0.225f;
+    ByteBuffer buf = ByteBuffer.allocateDirect(1 * 256 * 256 * 3 * 4).order(ByteOrder.nativeOrder());
+    for (int y=0; y<256; y++) {
+      for (int x=0; x<256; x++) {
+        float r = rgb[y][x][0], g = rgb[y][x][1], b = rgb[y][x][2];
+        buf.putFloat((r - meanR) / stdR);
+        buf.putFloat((g - meanG) / stdG);
+        buf.putFloat((b - meanB) / stdB);
+      }
+    }
+    buf.rewind();
+    return buf;
+  }
+
+// </editor-fold>
+
 
 }
 

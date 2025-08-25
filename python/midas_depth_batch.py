@@ -1,0 +1,558 @@
+from midas.midas_net import MidasNet
+from midas.midas_net_custom import MidasNet_small
+from midas.dpt_depth import DPTDepthModel
+
+import torch
+import cv2
+import numpy as np
+import inspect
+import re
+import matplotlib.pyplot as plt
+import torch.nn.functional as F
+    
+def load_rgb_from_float6(file_path, file_name, H, W):
+
+    data = np.fromfile(file_path + "/" + file_name, dtype='<f4').reshape(-1, 6)
+    
+    rgb = data[:, 3:6]                    # keep only r,g,b
+    rgb = rgb.reshape(H, W, 3).astype(np.float32)
+
+    # if values are already 0–1 floats, leave them
+    # if they are 0–255 floats, divide by 255
+    if rgb.max() > 1.5:
+        rgb /= 255.0
+
+    return rgb
+
+def midas_pred_to_grey(pred, target_hw, mode="bilinear"):
+    H, W = map(int, target_hw)
+
+    # to torch float tensor
+    t = torch.as_tensor(pred).float()
+
+    # ensure shape (1,1,h,w)
+    if t.ndim == 2:
+        t = t.unsqueeze(0).unsqueeze(0)
+    elif t.ndim == 3:
+        # (C,h,w) or (1,h,w)
+        if t.shape[0] == 1:
+            t = t.unsqueeze(0)              # -> (1,1,h,w)
+        else:
+            t = t[:1].unsqueeze(0)          # keep first channel
+    elif t.ndim == 4:
+        if t.shape[0] > 1:
+            t = t[:1]                       # keep first batch
+        if t.shape[1] > 1:
+            t = t[:, :1]                    # keep first channel
+    else:
+        raise ValueError(f"Unexpected pred shape: {tuple(t.shape)}")
+
+    # resize to (H, W)
+    with torch.no_grad():
+        out = F.interpolate(t, size=(H, W), mode=mode, align_corners=False)
+        depth = out[0, 0].cpu().numpy().astype(np.float32)  # HxW
+
+    # normalize to [0,1] for display
+    dmin, dmax = float(depth.min()), float(depth.max())
+    if dmax - dmin < 1e-12:
+        depth_grey = np.zeros_like(depth, dtype=np.float32)
+    else:
+        depth_grey = (depth - dmin) / (dmax - dmin)
+
+    # Convert to 3-channel grayscale (r=g=b)
+    depth_rgb = np.stack([depth_grey]*3, axis=-1)  # shape (H, W, 3)
+
+    return depth_rgb
+
+def show_rgb_images(*images, titles=None, cmaps=None, vmaxs=None):
+    """
+    Display up to four images side by side.
+    Args:
+        *images: Up to 4 images (e.g., rgb, depth_gray, etc.), each as np.ndarray.
+        titles: Optional list of titles for each image.
+        cmaps: Optional list of colormaps for each image (e.g., ["", "gray"]).
+        vmaxs: Optional list of vmax values for each image (for normalization).
+    """
+    n = len(images)
+    if n == 0 or n > 4:
+        raise ValueError("Provide 1 to 4 images.")
+
+    if titles is None:
+        frame = inspect.currentframe().f_back
+        arg_names = [name.strip() for name in frame.f_code.co_varnames[:frame.f_code.co_argcount]]
+        # Try to get the variable names passed as *images
+        try:
+            call_source = inspect.getframeinfo(frame).code_context[0]
+            match = re.search(r'show_rgb_images\((.*?)\)', call_source)
+            if match:
+                args_str = match.group(1)
+                # Remove possible keyword args
+                args_str = args_str.split("titles=")[0].split("cmaps=")[0].split("vmaxs=")[0]
+                names = [s.strip() for s in args_str.split(",")][:n]
+                titles = names
+            else:
+                titles = [f"Image {i+1}" for i in range(n)]
+        except Exception:
+            titles = [f"Image {i+1}" for i in range(n)]
+    if cmaps is None:
+        cmaps = [None] * n
+    if vmaxs is None:
+        vmaxs = [None] * n
+
+    plt.figure(figsize=(6 * n, 6))
+    for i, img in enumerate(images):
+        plt.subplot(1, n, i + 1)
+        disp = img
+        if disp.dtype != np.float32 and disp.dtype != np.float64:
+            disp = disp.astype(np.float32)
+        if disp.max() > 1.5:
+            disp = disp / 255.0
+        cmap = cmaps[i] if i < len(cmaps) else None
+        vmax = vmaxs[i] if i < len(vmaxs) else None
+        if cmap is not None:
+            plt.imshow(disp, cmap=cmap, vmin=0.0, vmax=vmax if vmax is not None else 1.0)
+        else:
+            plt.imshow(np.clip(disp, 0.0, 1.0))
+        plt.title(titles[i])
+        plt.axis("off")
+    plt.tight_layout()
+    plt.show()
+
+def center_crop_square(img):
+    """
+    Center-crop the largest square fully contained in `img`.
+    Returns:
+      crop : np.ndarray of shape (S,S,...) where S = min(H,W)
+      box  : (y0, y1, x0, x1) in original image coords
+    """
+    H, W = img.shape[:2]
+    S = min(H, W)
+    y0 = (H - S) // 2
+    x0 = (W - S) // 2
+    y1, x1 = y0 + S, x0 + S
+    crop = img[y0:y1, x0:x1, ...] if img.ndim == 3 else img[y0:y1, x0:x1]
+    return crop, (y0, y1, x0, x1)
+
+def paste_center_square(square, full_hw, fill_value=0.0):
+    """
+    Paste a (256,256) square into the center of a blank canvas of size (H,W).
+
+    Parameters
+    ----------
+    square : np.ndarray
+        The cropped output (HxW or HxWxC), must be 256x256.
+    full_hw : tuple
+        (H, W) of the original image you want to paste into.
+    fill_value : float
+        Background fill value (default=0.0).
+
+    Returns
+    -------
+    canvas : np.ndarray
+        Canvas of shape (H,W) or (H,W,C) with the square inserted at the center.
+    """
+    H, W = full_hw
+    h, w = square.shape[:2]
+    if h != 256 or w != 256:
+        raise ValueError(f"Expected square 256x256, got {h}x{w}")
+    if H < h or W < w:
+        raise ValueError("Full canvas must be larger than the square")
+
+    # init blank canvas
+    if square.ndim == 2:
+        canvas = np.full((H, W), fill_value, dtype=square.dtype)
+    else:
+        C = square.shape[2]
+        canvas = np.full((H, W, C), fill_value, dtype=square.dtype)
+
+    # compute placement (centered)
+    y0 = (H - h) // 2
+    x0 = (W - w) // 2
+    y1, x1 = y0 + h, x0 + w
+
+    canvas[y0:y1, x0:x1, ...] = square
+    return canvas
+
+def paste_into_box(tile, full_hw, box, resize_if_needed=True, interp=cv2.INTER_LINEAR):
+    """
+    Paste `tile` (2D or 3D) into an H×W canvas at `box=(y0,y1,x0,x1)`.
+    If tile size != box size and resize_if_needed=True, tile is resized to fit.
+    """
+    H, W = full_hw
+    y0, y1, x0, x1 = box
+    h, w = y1 - y0, x1 - x0
+    if h <= 0 or w <= 0:
+        raise ValueError(f"Invalid box: {box}")
+    if H < y1 or W < x1:
+        raise ValueError(f"Box {box} exceeds canvas {H}×{W}")
+
+    tile_arr = np.asarray(tile)
+    if tile_arr.ndim == 2:
+        canvas = np.zeros((H, W), dtype=tile_arr.dtype)
+    else:
+        C = tile_arr.shape[2]
+        canvas = np.zeros((H, W, C), dtype=tile_arr.dtype)
+
+    # Resize if needed to exactly match the box
+    if (tile_arr.shape[0], tile_arr.shape[1]) != (h, w):
+        if not resize_if_needed:
+            raise ValueError(f"Tile {tile_arr.shape[:2]} != box {(h,w)} and resize_if_needed=False")
+        # Handle 2D vs 3D resize
+        if tile_arr.ndim == 2:
+            tile_arr = cv2.resize(tile_arr, (w, h), interpolation=interp)
+        else:
+            tile_arr = cv2.resize(tile_arr, (w, h), interpolation=interp)
+
+    canvas[y0:y1, x0:x1, ...] = tile_arr
+    return canvas
+
+def rot90k(arr, k: int):
+    k = int(k) % 4     # anti-clockwise steps
+    if k == 0:
+        return arr
+    return np.rot90(arr, k=k)
+
+def get_cropped_or_scaled_image(rgb, target_size, crop_not_scale):
+    if crop_not_scale:
+        cropped_image, crop_box = center_crop_square(rgb)
+        input_image = cv2.resize(cropped_image, (target_size, target_size), interpolation=cv2.INTER_LINEAR)
+        height_in_image = cropped_image.shape[0]
+        width_in_image = cropped_image.shape[1]
+        print(rgb.shape, "->", cropped_image.shape, "->", input_image.shape)
+        print("Crop box:", crop_box)       
+    else:
+        input_image = cv2.resize(rgb, (target_size, target_size), interpolation=cv2.INTER_LINEAR)
+        height_in_image = image_height
+        width_in_image = image_width
+        print(rgb.shape, "->", input_image.shape)   
+        crop_box = (0, image_height, 0, image_width)
+
+    return input_image, crop_box, height_in_image, width_in_image
+
+def get_prepared_image_for_model(input_image):
+
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+    input_image = (input_image - mean) / std
+
+    input_image = torch.from_numpy(input_image.transpose(2,0,1)).unsqueeze(0)
+
+    return input_image
+
+def save_rgb_to_float6(file_path, img, alpha=1.0):
+
+    if img.ndim != 3 or img.shape[2] != 3:
+        raise ValueError(f"Expected (H,W,3), got {img.shape}")
+
+    H, W, _ = img.shape
+
+    # build coordinate grid
+    y_coords, x_coords = np.meshgrid(np.arange(H, dtype=np.float32),
+                                     np.arange(W, dtype=np.float32),
+                                     indexing="ij")
+
+    # flatten
+    x_flat = x_coords.reshape(-1, 1)
+    y_flat = y_coords.reshape(-1, 1)
+    a_flat = np.full_like(x_flat, float(alpha), dtype=np.float32)
+    rgb_flat = img.reshape(-1, 3).astype(np.float32)
+
+    # concatenate into (N,6)
+    arr = np.concatenate([x_flat, y_flat, a_flat, rgb_flat], axis=1)
+
+    # write to file in float32
+    arr.astype("<f4").tofile(file_path)
+
+    return arr  # also return the array in case you want to use it
+
+def resize_keep_aspect_upper_bound(img, long_side=384, mult=32):
+    H, W = img.shape[:2]
+    scale = long_side / max(H, W)
+    newW, newH = int(round(W*scale)), int(round(H*scale))
+    # round to nearest multiple of 32
+    newW = max(mult, int(round(newW / mult)) * mult)
+    newH = max(mult, int(round(newH / mult)) * mult)
+    return cv2.resize(img, (newW, newH), interpolation=cv2.INTER_LINEAR)
+
+# def load_model(model_name, model_weights_dict):
+
+    weights_path = model_weights_dict.get(model_name)
+    state_dict = torch.load(weights_path, map_location="cpu")
+
+    if model_name == "midas_v21_small":
+        model = MidasNet_small()
+        target_size = 256
+        model.load_state_dict(state_dict)
+
+    elif model_name == "midas_v21":
+        model = MidasNet()
+        target_size = 384
+        model.load_state_dict(state_dict)
+
+    elif model_name == "dpt_large":
+        try:
+            hidden = state_dict["pretrained.model.cls_token"].shape[-1]
+        except KeyError:
+            raise RuntimeError("This checkpoint is not a DPT ViT checkpoint (missing 'pretrained.model.cls_token').")
+
+        if hidden == 1024:
+            backbone = "vitl16_384"   # DPT-Large
+        elif hidden == 768:
+            backbone = "vitb16_384"   # DPT-Base
+        else:
+            raise RuntimeError(f"Unknown ViT hidden size {hidden}; expected 768 (B) or 1024 (L).")
+
+        model = DPTDepthModel(backbone=backbone, non_negative=True)
+        model.load_state_dict(state_dict, strict=True)
+        target_size = 384
+
+    elif model_name == "dpt_beit_large_512":
+        from midas.dpt_depth import DPTDepthModel
+        model = DPTDepthModel(backbone="beitl16_512", non_negative=True)
+
+        state_dict = torch.load(weights_path, map_location="cpu")
+
+        # (If you kept the earlier filter for timm 1.0.x checkpoints, leave it in.)
+        if any("relative_position_index" in k for k in state_dict):
+            state_dict = {k: v for k, v in state_dict.items()
+                        if "relative_position_index" not in k}
+
+        # Load weights
+        _ = model.load_state_dict(state_dict, strict=False)  # strict=False if you filtered
+        target_size = 512
+
+        # ---- NEW: compat patch for timm>=1.0 naming ----
+        try:
+            blocks = model.pretrained.model.blocks
+            for blk in blocks:
+                if not hasattr(blk, "drop_path"):
+                    if hasattr(blk, "drop_path1"):       # timm 1.0 style
+                        blk.drop_path = blk.drop_path1   # alias so MiDaS shim sees it
+                    else:
+                        # fallback no-op (shouldn’t be needed, but safe)
+                        import torch.nn as nn
+                        blk.drop_path = nn.Identity()
+        except Exception as e:
+            print("Warning: BEiT drop_path compat patch failed:", repr(e))
+
+
+
+    return model, target_size
+
+
+# def _patch_stochastic_depth_aliases_for_timm10(model):
+#     """
+#     timm>=1.0 renamed/duplicated stochastic-depth modules; MiDaS v3.1 shims
+#     expect a single attribute `drop_path` on each transformer block.
+#     This aliases it for both ViT (DPT-L/B) and BEiT backbones.
+#     """
+#     try:
+#         import torch.nn as nn
+#         blocks = getattr(model.pretrained.model, "blocks", None)
+#         if blocks is None:
+#             return
+#         for blk in blocks:
+#             if not hasattr(blk, "drop_path"):
+#                 if hasattr(blk, "drop_path1"):      # timm 1.x style
+#                     blk.drop_path = blk.drop_path1   # alias
+#                 else:
+#                     blk.drop_path = nn.Identity()     # ultra-safe fallback
+#     except Exception as e:
+#         print("warn: drop_path compat patch failed:", repr(e))
+
+def _patch_stochastic_depth_aliases_for_timm10(model):
+    import torch.nn as nn
+    blocks = getattr(model.pretrained.model, "blocks", None)
+    if not blocks: return
+    for blk in blocks:
+        if not hasattr(blk, "drop_path"):
+            if hasattr(blk, "drop_path1"):
+                blk.drop_path = blk.drop_path1
+            else:
+                blk.drop_path = nn.Identity()
+
+def load_model(model_name, model_weights_dict):
+    weights_path = model_weights_dict.get(model_name)
+
+    if model_name == "midas_v21_small":
+        state_dict = torch.load(weights_path, map_location="cpu")
+        model = MidasNet_small()
+        target_size = 256
+        model.load_state_dict(state_dict)
+
+    elif model_name == "midas_v21":
+        state_dict = torch.load(weights_path, map_location="cpu")
+        model = MidasNet()
+        target_size = 384
+        model.load_state_dict(state_dict)
+
+    elif model_name == "dpt_large":
+        state_dict = torch.load(weights_path, map_location="cpu")
+        hidden = state_dict["pretrained.model.cls_token"].shape[-1]
+        backbone = "vitl16_384" if hidden == 1024 else ("vitb16_384" if hidden == 768 else None)
+        if backbone is None:
+            raise RuntimeError(f"Unknown ViT hidden size {hidden}; expected 768 or 1024.")
+        model = DPTDepthModel(backbone=backbone, non_negative=True)
+        model.load_state_dict(state_dict, strict=True)
+        _patch_stochastic_depth_aliases_for_timm10(model)
+        target_size = 384
+
+    elif model_name == "dpt_beit_large_512":
+        model = DPTDepthModel(backbone="beitl16_512", non_negative=True)
+        state_dict = torch.load(weights_path, map_location="cpu")
+        if any("relative_position_index" in k for k in state_dict):
+            state_dict = {k: v for k, v in state_dict.items()
+                          if "relative_position_index" not in k}
+        _ = model.load_state_dict(state_dict, strict=False)  # filtered → non-strict
+        _patch_stochastic_depth_aliases_for_timm10(model)
+        target_size = 512
+
+    # elif model_name == "dpt_large":
+    #     # Load ckpt and DETERMINE backbone (Vit-L or Vit-B) from hidden size
+    #     state_dict = torch.load(weights_path, map_location="cpu")
+    #     try:
+    #         hidden = state_dict["pretrained.model.cls_token"].shape[-1]
+    #     except KeyError:
+    #         raise RuntimeError("This checkpoint is not a DPT ViT checkpoint (missing 'pretrained.model.cls_token').")
+
+    #     if hidden == 1024:
+    #         backbone = "vitl16_384"   # DPT-Large
+    #     elif hidden == 768:
+    #         backbone = "vitb16_384"   # DPT-Base
+    #     else:
+    #         raise RuntimeError(f"Unknown ViT hidden size {hidden}; expected 768 (B) or 1024 (L).")
+
+    #     model = DPTDepthModel(backbone=backbone, non_negative=True)
+    #     model.load_state_dict(state_dict, strict=True)
+    #     _patch_stochastic_depth_aliases_for_timm10(model)   # <-- add alias for timm 1.x
+    #     target_size = 384
+
+    # elif model_name == "dpt_beit_large_512":
+    #     from midas.dpt_depth import DPTDepthModel
+    #     model = DPTDepthModel(backbone="beitl16_512", non_negative=True)
+
+    #     state_dict = torch.load(weights_path, map_location="cpu")
+    #     # Drop BEiT buffers not registered in timm 1.x (harmless)
+    #     if any("relative_position_index" in k for k in state_dict):
+    #         state_dict = {k: v for k, v in state_dict.items()
+    #                       if "relative_position_index" not in k}
+
+    #     _ = model.load_state_dict(state_dict, strict=False)  # filtered → non-strict
+    #     _patch_stochastic_depth_aliases_for_timm10(model)    # alias for timm 1.x
+    #     target_size = 512
+
+    else:
+        raise ValueError(f"Unknown model_name: {model_name}")
+
+    return model, target_size
+
+
+def get_model_input(image, model_name, crop_not_scale):
+    global target_size  # ensure visible if you reuse it elsewhere
+
+    if model_name in ("midas_v21", "midas_v21_small"):
+        input_image, crop_box, height_in_image, width_in_image = \
+            get_cropped_or_scaled_image(image, target_size, crop_not_scale)
+        tensor = to_imagenet_norm(input_image)
+
+    elif model_name == "dpt_large":
+        input_image = resize_keep_aspect_upper_bound(image, 384, 32)
+        crop_box = (0, image.shape[0], 0, image.shape[1])   # full frame
+        height_in_image, width_in_image = image.shape[:2]
+        tensor = to_minus1_1(input_image)
+
+    elif model_name == "dpt_beit_large_512":
+        input_image = resize_keep_aspect_upper_bound(image, 512, 32)
+        crop_box = (0, image.shape[0], 0, image.shape[1])   # full frame
+        height_in_image, width_in_image = image.shape[:2]
+        tensor = to_minus1_1(input_image)
+
+    else:
+        raise ValueError(f"Unknown model_name: {model_name}")
+
+    return tensor, crop_box, height_in_image, width_in_image
+
+def to_imagenet_norm(input_image):
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    x = input_image.astype(np.float32)
+    if x.max() > 1.5: x /= 255.0
+    x = (x - mean) / std
+    return torch.from_numpy(x.transpose(2,0,1)).unsqueeze(0)
+
+def to_minus1_1(input_image):
+    x = input_image.astype(np.float32)
+    if x.max() > 1.5: x /= 255.0
+    x = (x - 0.5) / 0.5
+    return torch.from_numpy(x.transpose(2,0,1)).unsqueeze(0)
+
+##########################################################################################################
+
+FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250819_3_(test_rotation)"
+
+FILE_NAME = "batch_0_depth_map_camera_0.bin"
+
+CROP_NOT_SCALE = True
+
+ROTATE_K = 3
+
+MIDAS_MODEL_WEIGHTS = {
+    "midas_v21_small": r"C:\Users\steph\Documents\Projects\AndroidStudioProjects\Velociraptor-app\MiDaS_weights\midas_v21_small-70d6b9c8.pt",
+    "midas_v21": r"C:\Users\steph\Documents\Projects\AndroidStudioProjects\Velociraptor-app\MiDaS_weights\midas_v21-f6b98070.pt",
+    "dpt_large": r"C:\Users\steph\Documents\Projects\AndroidStudioProjects\Velociraptor-app\MiDaS_weights\dpt_large-midas-2f21e586.pt",
+    "dpt_beit_large_512": r"C:\Users\steph\Documents\Projects\AndroidStudioProjects\Velociraptor-app\MiDaS_weights\dpt_beit_large_512.pt"
+    # Add more models and their weights paths here as needed
+    
+}
+
+##########################################################################################################
+
+
+# model_name = "dpt_beit_large_512"
+# model_name = "dpt_large"
+# model_name = "midas_v21"
+# model_name = "midas_v21_small"
+model_name_list = ["dpt_beit_large_512", "dpt_large", "midas_v21", "midas_v21_small"]
+
+###############################################################################################################
+
+
+
+rgb_original = load_rgb_from_float6(FILE_PATH, FILE_NAME, 480, 640)
+rgb = rot90k(rgb_original, ROTATE_K)
+
+for model_name in model_name_list:
+    
+    model, target_size = load_model(model_name, MIDAS_MODEL_WEIGHTS)
+
+    image_height, image_width = rgb.shape[:2]
+
+    input_image, crop_box, height_in_image, width_in_image = get_model_input(rgb, model_name, CROP_NOT_SCALE)
+
+    with torch.no_grad():
+        pred = model(input_image)  # MiDaS_small output
+
+
+    depth_grey = midas_pred_to_grey(pred, (height_in_image, width_in_image), mode="bilinear")
+
+    if model_name in ("midas_v21", "midas_v21_small"):
+        depth_on_full = paste_into_box(depth_grey, (image_height, image_width), crop_box, resize_if_needed=False)
+    elif model_name in ("dpt_large", "dpt_beit_large_512"):
+        depth_on_full = depth_grey  # already (H, W) == (image_height, image_width)
+
+    # display
+    # show_rgb_images(rgb, depth_on_full)
+    depth_grey_phone_original = load_rgb_from_float6(FILE_PATH, FILE_NAME.replace("camera", "grey"), 480, 640)
+    depth_grey_phone = rot90k(depth_grey_phone_original, ROTATE_K)
+
+    depth_map_diff = -(depth_on_full - depth_grey_phone)/2.0 + 0.5
+
+    show_rgb_images(rgb, depth_on_full, depth_grey_phone, depth_map_diff, titles=["Camera Image", model_name, "Phone Midas v2.1 small", "Diff"])
+
+
+    depth_on_full = rot90k(depth_on_full, -ROTATE_K)
+
+
+    arr = save_rgb_to_float6(FILE_PATH + "/" + FILE_NAME.replace("camera", model_name), depth_on_full, alpha=1.0)

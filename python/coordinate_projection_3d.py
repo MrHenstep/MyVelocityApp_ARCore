@@ -25,66 +25,67 @@ def read_extrinsics_matrix(path):
     return matrix.reshape(4, 4, order='F')   # interpret column-major
 
 
+if __name__ == "__main__":
 
-##########################################################################################################
+    ##########################################################################################################
 
-# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250812_1_(frametiming)(indoors)(motion)"
-# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250812_2_(frametiming)(outdoors)(motion)"
-# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250813_1_(5fps)(outside)"
-# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
-FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250818_1_(5fps)(outside)(tracking)"
+    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250812_1_(frametiming)(indoors)(motion)"
+    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250812_2_(frametiming)(outdoors)(motion)"
+    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250813_1_(5fps)(outside)"
+    FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250818_1_(5fps)(outside)(tracking)"
 
-###########################################################################################################
+    ###########################################################################################################
 
-##################################################################################################################
-
-
-BATCH_NUMBER = 0
-CONFIDENCE_LEVEL = 0.75
-DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, 25.0)
-
-DEPTH_POINTS_INDICES = range(0, 20, 19)
-
-MATCH_TIMESTAMPS = False
-
-# Apply a sigmoid weight dropping towards zero above 7, width 1
-X_CUT = 7.0
-X_WIDTH = 1.0
-WEIGHTS_SIGMOID = (X_CUT, X_WIDTH)
-
-##################################################################################################################
-
-TIMESTAMPS_TABLE = exv.read_timestamp_files(FILE_PATH, BATCH_NUMBER)
-
-if MATCH_TIMESTAMPS:
-    MATCHED_INDICES = exv.find_closest_timestamp_matches(TIMESTAMPS_TABLE, 3, 2, direction='both')
-else:
-    MATCHED_INDICES = exv.get_all_indices(FILE_PATH, BATCH_NUMBER)
-
-MATCHED_FILENAME_TABLE = exv.get_matched_filenames(MATCHED_INDICES, FILE_PATH, BATCH_NUMBER)
+    ##################################################################################################################
 
 
-##################################################################################################################
+    BATCH_NUMBER = 0
+    CONFIDENCE_LEVEL = 0.75
+    DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, 25.0)
+
+    DEPTH_POINTS_INDICES = range(0, 20, 19)
+
+    MATCH_TIMESTAMPS = False
+
+    # Apply a sigmoid weight dropping towards zero above 7, width 1
+    X_CUT = 7.0
+    X_WIDTH = 1.0
+    WEIGHTS_SIGMOID = (X_CUT, X_WIDTH)
+
+    ##################################################################################################################
+
+    TIMESTAMPS_TABLE = exv.read_timestamp_files(FILE_PATH, BATCH_NUMBER)
+
+    if MATCH_TIMESTAMPS:
+        MATCHED_INDICES = exv.find_closest_timestamp_matches(TIMESTAMPS_TABLE, 3, 2, direction='both')
+    else:
+        MATCHED_INDICES = exv.get_all_indices(FILE_PATH, BATCH_NUMBER)
+
+    MATCHED_FILENAME_TABLE = exv.get_matched_filenames(MATCHED_INDICES, FILE_PATH, BATCH_NUMBER)
 
 
-# for idx, row in enumerate(MATCHED_FILENAME_TABLE):
+    ##################################################################################################################
 
-#     FILE_NAME = row[7]
-#     image_dimensions, principal_point, focal_length = read_intrinsics_bin(FILE_PATH + "\\" +FILE_NAME)
-#     print(FILE_NAME + f" - Dim: {image_dimensions}, PP: {principal_point}, FL: {focal_length}")
 
-#     FILE_NAME = row[8]
-#     image_dimensions, principal_point, focal_length = read_intrinsics_bin(FILE_PATH + "\\" +FILE_NAME)
-#     print(FILE_NAME + f" - Dim: {image_dimensions}, PP: {principal_point}, FL: {focal_length}")
+    # for idx, row in enumerate(MATCHED_FILENAME_TABLE):
 
-#     FILE_NAME = row[6]
-#     extrinsic_matrix = read_extrinsics_matrix(FILE_PATH + "\\" + FILE_NAME)
-#     print(f"Extrinsic Matrix: {extrinsic_matrix}")
+    #     FILE_NAME = row[7]
+    #     image_dimensions, principal_point, focal_length = read_intrinsics_bin(FILE_PATH + "\\" +FILE_NAME)
+    #     print(FILE_NAME + f" - Dim: {image_dimensions}, PP: {principal_point}, FL: {focal_length}")
 
-#     print("\n")
+    #     FILE_NAME = row[8]
+    #     image_dimensions, principal_point, focal_length = read_intrinsics_bin(FILE_PATH + "\\" +FILE_NAME)
+    #     print(FILE_NAME + f" - Dim: {image_dimensions}, PP: {principal_point}, FL: {focal_length}")
 
-FILE_NAME = MATCHED_FILENAME_TABLE[0][0]
+    #     FILE_NAME = row[6]
+    #     extrinsic_matrix = read_extrinsics_matrix(FILE_PATH + "\\" + FILE_NAME)
+    #     print(f"Extrinsic Matrix: {extrinsic_matrix}")
 
-pts = exv.read_float_data_as_nx4(FILE_PATH, FILE_NAME)
+    #     print("\n")
 
-print(f"Tracked points shape: {pts.shape}")
+    FILE_NAME = MATCHED_FILENAME_TABLE[0][0]
+
+    pts = exv.read_float_data_as_nx4(FILE_PATH, FILE_NAME)
+
+    print(f"Tracked points shape: {pts.shape}")
