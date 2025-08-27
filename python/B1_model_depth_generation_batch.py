@@ -9,6 +9,68 @@ import inspect
 import re
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
+
+from transformers import AutoImageProcessor, AutoModelForDepthEstimation
+import time
+
+import L1_lib_extraction_and_visualisation as exv
+
+
+class DepthAnythingWrapper(torch.nn.Module):
+    """
+    Accepts NumPy or Torch; shapes: HxWx3, 3xHxW, 1x3xHxW, 1xHxWx3.
+    Values in [0,1] or [0,255]. Returns (1,1,h,w) on CPU, float32.
+    """
+    def __init__(self, model_id: str, device: str = "cpu"):
+        super().__init__()
+        self.device = torch.device(device)
+        self.processor = AutoImageProcessor.from_pretrained(model_id)
+        self.model = AutoModelForDepthEstimation.from_pretrained(model_id).to(self.device)
+        self.model.eval()
+
+    @staticmethod
+    def _to_numpy_hwc3(x) -> np.ndarray:
+        # Convert Torch → NumPy
+        if isinstance(x, torch.Tensor):
+            t = x.detach()
+            # Remove batch if present
+            if t.ndim == 4 and t.shape[0] == 1:
+                t = t.squeeze(0)
+            # 3xHxW → HxWx3
+            if t.ndim == 3 and t.shape[0] == 3:
+                t = t.permute(1, 2, 0)
+            # 1xHxWx3 → HxWx3
+            if t.ndim == 4 and t.shape[-1] == 3 and t.shape[0] == 1:
+                t = t.squeeze(0)
+            x = t.cpu().numpy()
+        else:
+            x = np.asarray(x)
+
+        if x.ndim != 3 or x.shape[2] != 3:
+            raise ValueError(f"Expected an RGB image, got shape {x.shape}")
+
+        x = x.astype(np.float32, copy=False)
+        # Scale if it looks like 0–255
+        if x.max() > 1.5:
+            x = x / 255.0
+        # Clamp for safety
+        x = np.clip(x, 0.0, 1.0)
+        return x
+
+    @torch.no_grad()
+    def forward(self, img) -> torch.Tensor:
+        x = self._to_numpy_hwc3(img)  # HxWx3, float32 in [0,1]
+        # inputs = self.processor(images=x, return_tensors="pt").to(self.device)
+        inputs = self.processor(images=x, return_tensors="pt", do_rescale=False).to(self.device)
+        out = self.model(**inputs)
+        depth = getattr(out, "predicted_depth", getattr(out, "depth", None))
+        if depth is None:
+            raise RuntimeError("DepthAnythingWrapper: unexpected model outputs.")
+        if depth.ndim == 3:
+            depth = depth.unsqueeze(1)  # (B,1,h,w)
+        # Return CPU float32 for your downstream
+        return depth.to("cpu", dtype=torch.float32)
+
     
 def load_rgb_from_float6(file_path, file_name, H, W):
 
@@ -66,27 +128,24 @@ def midas_pred_to_grey(pred, target_hw, mode="bilinear"):
 
 def show_rgb_images(*images, titles=None, cmaps=None, vmaxs=None):
     """
-    Display up to four images side by side.
+    Display images in a grid with up to 4 columns per row.
     Args:
-        *images: Up to 4 images (e.g., rgb, depth_gray, etc.), each as np.ndarray.
+        *images: Images (e.g., rgb, depth_gray, etc.), each as np.ndarray.
         titles: Optional list of titles for each image.
         cmaps: Optional list of colormaps for each image (e.g., ["", "gray"]).
         vmaxs: Optional list of vmax values for each image (for normalization).
     """
     n = len(images)
-    if n == 0 or n > 4:
-        raise ValueError("Provide 1 to 4 images.")
+    cols = 4
+    rows = (n + cols - 1) // cols
 
     if titles is None:
         frame = inspect.currentframe().f_back
-        arg_names = [name.strip() for name in frame.f_code.co_varnames[:frame.f_code.co_argcount]]
-        # Try to get the variable names passed as *images
         try:
             call_source = inspect.getframeinfo(frame).code_context[0]
             match = re.search(r'show_rgb_images\((.*?)\)', call_source)
             if match:
                 args_str = match.group(1)
-                # Remove possible keyword args
                 args_str = args_str.split("titles=")[0].split("cmaps=")[0].split("vmaxs=")[0]
                 names = [s.strip() for s in args_str.split(",")][:n]
                 titles = names
@@ -99,9 +158,10 @@ def show_rgb_images(*images, titles=None, cmaps=None, vmaxs=None):
     if vmaxs is None:
         vmaxs = [None] * n
 
-    plt.figure(figsize=(6 * n, 6))
+    plt.figure(figsize=(6 * cols, 6 * rows))
     for i, img in enumerate(images):
-        plt.subplot(1, n, i + 1)
+        r, c = divmod(i, cols)
+        plt.subplot(rows, cols, i + 1)
         disp = img
         if disp.dtype != np.float32 and disp.dtype != np.float64:
             disp = disp.astype(np.float32)
@@ -218,13 +278,13 @@ def get_cropped_or_scaled_image(rgb, target_size, crop_not_scale):
         input_image = cv2.resize(cropped_image, (target_size, target_size), interpolation=cv2.INTER_LINEAR)
         height_in_image = cropped_image.shape[0]
         width_in_image = cropped_image.shape[1]
-        print(rgb.shape, "->", cropped_image.shape, "->", input_image.shape)
-        print("Crop box:", crop_box)       
+        # print(rgb.shape, "->", cropped_image.shape, "->", input_image.shape)
+        # print("Crop box:", crop_box)       
     else:
         input_image = cv2.resize(rgb, (target_size, target_size), interpolation=cv2.INTER_LINEAR)
         height_in_image = image_height
         width_in_image = image_width
-        print(rgb.shape, "->", input_image.shape)   
+        # print(rgb.shape, "->", input_image.shape)   
         crop_box = (0, image_height, 0, image_width)
 
     return input_image, crop_box, height_in_image, width_in_image
@@ -275,92 +335,6 @@ def resize_keep_aspect_upper_bound(img, long_side=384, mult=32):
     newH = max(mult, int(round(newH / mult)) * mult)
     return cv2.resize(img, (newW, newH), interpolation=cv2.INTER_LINEAR)
 
-# def load_model(model_name, model_weights_dict):
-
-    weights_path = model_weights_dict.get(model_name)
-    state_dict = torch.load(weights_path, map_location="cpu")
-
-    if model_name == "midas_v21_small":
-        model = MidasNet_small()
-        target_size = 256
-        model.load_state_dict(state_dict)
-
-    elif model_name == "midas_v21":
-        model = MidasNet()
-        target_size = 384
-        model.load_state_dict(state_dict)
-
-    elif model_name == "dpt_large":
-        try:
-            hidden = state_dict["pretrained.model.cls_token"].shape[-1]
-        except KeyError:
-            raise RuntimeError("This checkpoint is not a DPT ViT checkpoint (missing 'pretrained.model.cls_token').")
-
-        if hidden == 1024:
-            backbone = "vitl16_384"   # DPT-Large
-        elif hidden == 768:
-            backbone = "vitb16_384"   # DPT-Base
-        else:
-            raise RuntimeError(f"Unknown ViT hidden size {hidden}; expected 768 (B) or 1024 (L).")
-
-        model = DPTDepthModel(backbone=backbone, non_negative=True)
-        model.load_state_dict(state_dict, strict=True)
-        target_size = 384
-
-    elif model_name == "dpt_beit_large_512":
-        from midas.dpt_depth import DPTDepthModel
-        model = DPTDepthModel(backbone="beitl16_512", non_negative=True)
-
-        state_dict = torch.load(weights_path, map_location="cpu")
-
-        # (If you kept the earlier filter for timm 1.0.x checkpoints, leave it in.)
-        if any("relative_position_index" in k for k in state_dict):
-            state_dict = {k: v for k, v in state_dict.items()
-                        if "relative_position_index" not in k}
-
-        # Load weights
-        _ = model.load_state_dict(state_dict, strict=False)  # strict=False if you filtered
-        target_size = 512
-
-        # ---- NEW: compat patch for timm>=1.0 naming ----
-        try:
-            blocks = model.pretrained.model.blocks
-            for blk in blocks:
-                if not hasattr(blk, "drop_path"):
-                    if hasattr(blk, "drop_path1"):       # timm 1.0 style
-                        blk.drop_path = blk.drop_path1   # alias so MiDaS shim sees it
-                    else:
-                        # fallback no-op (shouldn’t be needed, but safe)
-                        import torch.nn as nn
-                        blk.drop_path = nn.Identity()
-        except Exception as e:
-            print("Warning: BEiT drop_path compat patch failed:", repr(e))
-
-
-
-    return model, target_size
-
-
-# def _patch_stochastic_depth_aliases_for_timm10(model):
-#     """
-#     timm>=1.0 renamed/duplicated stochastic-depth modules; MiDaS v3.1 shims
-#     expect a single attribute `drop_path` on each transformer block.
-#     This aliases it for both ViT (DPT-L/B) and BEiT backbones.
-#     """
-#     try:
-#         import torch.nn as nn
-#         blocks = getattr(model.pretrained.model, "blocks", None)
-#         if blocks is None:
-#             return
-#         for blk in blocks:
-#             if not hasattr(blk, "drop_path"):
-#                 if hasattr(blk, "drop_path1"):      # timm 1.x style
-#                     blk.drop_path = blk.drop_path1   # alias
-#                 else:
-#                     blk.drop_path = nn.Identity()     # ultra-safe fallback
-#     except Exception as e:
-#         print("warn: drop_path compat patch failed:", repr(e))
-
 def _patch_stochastic_depth_aliases_for_timm10(model):
     import torch.nn as nn
     blocks = getattr(model.pretrained.model, "blocks", None)
@@ -408,45 +382,30 @@ def load_model(model_name, model_weights_dict):
         _patch_stochastic_depth_aliases_for_timm10(model)
         target_size = 512
 
-    # elif model_name == "dpt_large":
-    #     # Load ckpt and DETERMINE backbone (Vit-L or Vit-B) from hidden size
-    #     state_dict = torch.load(weights_path, map_location="cpu")
-    #     try:
-    #         hidden = state_dict["pretrained.model.cls_token"].shape[-1]
-    #     except KeyError:
-    #         raise RuntimeError("This checkpoint is not a DPT ViT checkpoint (missing 'pretrained.model.cls_token').")
+    elif model_name in (
+        "depth_anything_v1_small", "depth_anything_v1_base", "depth_anything_v1_large",
+        "depth_anything_v2_small", "depth_anything_v2_base", "depth_anything_v2_large"
+    ):
 
-    #     if hidden == 1024:
-    #         backbone = "vitl16_384"   # DPT-Large
-    #     elif hidden == 768:
-    #         backbone = "vitb16_384"   # DPT-Base
-    #     else:
-    #         raise RuntimeError(f"Unknown ViT hidden size {hidden}; expected 768 (B) or 1024 (L).")
+        model_id_map = {
+            # V1 (LiheYoung org)
+            "depth_anything_v1_small": "LiheYoung/depth-anything-small-hf",
+            "depth_anything_v1_base":  "LiheYoung/depth-anything-base-hf",
+            "depth_anything_v1_large": "LiheYoung/depth-anything-large-hf",
 
-    #     model = DPTDepthModel(backbone=backbone, non_negative=True)
-    #     model.load_state_dict(state_dict, strict=True)
-    #     _patch_stochastic_depth_aliases_for_timm10(model)   # <-- add alias for timm 1.x
-    #     target_size = 384
+            # V2 (depth-anything org, Transformers-ready “-hf” variants)
+            "depth_anything_v2_small": "depth-anything/Depth-Anything-V2-Small-hf",
+            "depth_anything_v2_base":  "depth-anything/Depth-Anything-V2-Base-hf",
+            "depth_anything_v2_large": "depth-anything/Depth-Anything-V2-Large-hf",
+        }
 
-    # elif model_name == "dpt_beit_large_512":
-    #     from midas.dpt_depth import DPTDepthModel
-    #     model = DPTDepthModel(backbone="beitl16_512", non_negative=True)
-
-    #     state_dict = torch.load(weights_path, map_location="cpu")
-    #     # Drop BEiT buffers not registered in timm 1.x (harmless)
-    #     if any("relative_position_index" in k for k in state_dict):
-    #         state_dict = {k: v for k, v in state_dict.items()
-    #                       if "relative_position_index" not in k}
-
-    #     _ = model.load_state_dict(state_dict, strict=False)  # filtered → non-strict
-    #     _patch_stochastic_depth_aliases_for_timm10(model)    # alias for timm 1.x
-    #     target_size = 512
+        model = DepthAnythingWrapper(model_id=model_id_map[model_name], device="cpu")
+        target_size = None
 
     else:
         raise ValueError(f"Unknown model_name: {model_name}")
 
     return model, target_size
-
 
 def get_model_input(image, model_name, crop_not_scale):
     global target_size  # ensure visible if you reuse it elsewhere
@@ -468,6 +427,12 @@ def get_model_input(image, model_name, crop_not_scale):
         height_in_image, width_in_image = image.shape[:2]
         tensor = to_minus1_1(input_image)
 
+    elif model_name.startswith("depth_anything_"):
+        input_image = image
+        crop_box = (0, image.shape[0], 0, image.shape[1])
+        height_in_image, width_in_image = image.shape[:2]
+        tensor = input_image  # numpy; wrapper will process internally
+
     else:
         raise ValueError(f"Unknown model_name: {model_name}")
 
@@ -487,72 +452,96 @@ def to_minus1_1(input_image):
     x = (x - 0.5) / 0.5
     return torch.from_numpy(x.transpose(2,0,1)).unsqueeze(0)
 
-##########################################################################################################
 
-FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
-# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250819_3_(test_rotation)"
+if __name__ == "__main__":
+        
+    ##########################################################################################################
 
-FILE_NAME = "batch_0_depth_map_camera_0.bin"
+    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
 
-CROP_NOT_SCALE = True
-
-ROTATE_K = 3
-
-MIDAS_MODEL_WEIGHTS = {
-    "midas_v21_small": r"C:\Users\steph\Documents\Projects\AndroidStudioProjects\Velociraptor-app\MiDaS_weights\midas_v21_small-70d6b9c8.pt",
-    "midas_v21": r"C:\Users\steph\Documents\Projects\AndroidStudioProjects\Velociraptor-app\MiDaS_weights\midas_v21-f6b98070.pt",
-    "dpt_large": r"C:\Users\steph\Documents\Projects\AndroidStudioProjects\Velociraptor-app\MiDaS_weights\dpt_large-midas-2f21e586.pt",
-    "dpt_beit_large_512": r"C:\Users\steph\Documents\Projects\AndroidStudioProjects\Velociraptor-app\MiDaS_weights\dpt_beit_large_512.pt"
-    # Add more models and their weights paths here as needed
-    
-}
-
-##########################################################################################################
+    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
 
 
-# model_name = "dpt_beit_large_512"
-# model_name = "dpt_large"
-# model_name = "midas_v21"
-# model_name = "midas_v21_small"
-model_name_list = ["dpt_beit_large_512", "dpt_large", "midas_v21", "midas_v21_small"]
+    BATCH_NUMBER = 1
 
-###############################################################################################################
+    CROP_NOT_SCALE = True
 
+    # ROTATE_K = 3 # if the phone is vertical
+    ROTATE_K = 0 # if the phone is horizontal
 
+    MIDAS_MODEL_WEIGHTS = {
+        "midas_v21_small": r"C:\Users\steph\Documents\Projects\AndroidStudioProjects\Velociraptor-app\MiDaS_weights\midas_v21_small-70d6b9c8.pt",
+        "midas_v21": r"C:\Users\steph\Documents\Projects\AndroidStudioProjects\Velociraptor-app\MiDaS_weights\midas_v21-f6b98070.pt",
+        "dpt_large": r"C:\Users\steph\Documents\Projects\AndroidStudioProjects\Velociraptor-app\MiDaS_weights\dpt_large-midas-2f21e586.pt",
+        "dpt_beit_large_512": r"C:\Users\steph\Documents\Projects\AndroidStudioProjects\Velociraptor-app\MiDaS_weights\dpt_beit_large_512.pt"
+        # Add more models and their weights paths here as needed
+        
+    }
 
-rgb_original = load_rgb_from_float6(FILE_PATH, FILE_NAME, 480, 640)
-rgb = rot90k(rgb_original, ROTATE_K)
+    ##########################################################################################################
 
-for model_name in model_name_list:
-    
-    model, target_size = load_model(model_name, MIDAS_MODEL_WEIGHTS)
+    # model_name_list = ["midas_v21", "dpt_large", "dpt_beit_large_512", "depth_anything_v2_small", "depth_anything_v2_base", "depth_anything_v2_large"]
+    model_name_list = ["depth_anything_v2_large"]
 
-    image_height, image_width = rgb.shape[:2]
+    ###############################################################################################################
 
-    input_image, crop_box, height_in_image, width_in_image = get_model_input(rgb, model_name, CROP_NOT_SCALE)
+    MATCHED_INDICES = exv.get_all_indices(FILE_PATH, BATCH_NUMBER)
+    MATCHED_FILENAME_TABLE = exv.get_matched_filenames(MATCHED_INDICES, FILE_PATH, BATCH_NUMBER)
 
-    with torch.no_grad():
-        pred = model(input_image)  # MiDaS_small output
+    for index, row in enumerate(MATCHED_FILENAME_TABLE):
 
+        # if (index != 0): continue
 
-    depth_grey = midas_pred_to_grey(pred, (height_in_image, width_in_image), mode="bilinear")
+        file_name = row[1]  # camera file
 
-    if model_name in ("midas_v21", "midas_v21_small"):
-        depth_on_full = paste_into_box(depth_grey, (image_height, image_width), crop_box, resize_if_needed=False)
-    elif model_name in ("dpt_large", "dpt_beit_large_512"):
-        depth_on_full = depth_grey  # already (H, W) == (image_height, image_width)
+        depth_grey_phone_original = load_rgb_from_float6(FILE_PATH, file_name.replace("camera", "grey"), 480, 640)
+        depth_grey_phone = rot90k(depth_grey_phone_original, ROTATE_K)
 
-    # display
-    # show_rgb_images(rgb, depth_on_full)
-    depth_grey_phone_original = load_rgb_from_float6(FILE_PATH, FILE_NAME.replace("camera", "grey"), 480, 640)
-    depth_grey_phone = rot90k(depth_grey_phone_original, ROTATE_K)
-
-    depth_map_diff = -(depth_on_full - depth_grey_phone)/2.0 + 0.5
-
-    show_rgb_images(rgb, depth_on_full, depth_grey_phone, depth_map_diff, titles=["Camera Image", model_name, "Phone Midas v2.1 small", "Diff"])
+        rgb_original = load_rgb_from_float6(FILE_PATH, file_name, 480, 640)
+        rgb = rot90k(rgb_original, ROTATE_K)
+        image_height, image_width = rgb.shape[:2]
 
 
-    depth_on_full = rot90k(depth_on_full, -ROTATE_K)
+        saved_images = []
+        saved_images.append((file_name, rgb, None))
+        saved_images.append((file_name.replace("camera", "grey"), depth_grey_phone, None))
 
+        for model_name in model_name_list:
+            
+            print(f"Running {model_name} on image file {file_name} ...")
 
-    arr = save_rgb_to_float6(FILE_PATH + "/" + FILE_NAME.replace("camera", model_name), depth_on_full, alpha=1.0)
+            print (f"\tLoading {model_name} ...")
+            model, target_size = load_model(model_name, MIDAS_MODEL_WEIGHTS)
+
+            print (f"\tPreparing input for {model_name} ...")
+            input_image, crop_box, height_in_image, width_in_image = get_model_input(rgb, model_name, CROP_NOT_SCALE)
+
+            print(f"\tRunning inference for {model_name} ...", end="", flush=True)
+            start_time = time.time()
+            with torch.no_grad():
+                pred = model(input_image)  # MiDaS_small output
+            end_time = time.time()
+            print(f" {end_time - start_time:.2f} seconds")
+            
+
+            print (f"\tPost-processing output for {model_name} ...")
+            depth_grey = midas_pred_to_grey(pred, (height_in_image, width_in_image), mode="bilinear")
+
+            if model_name in ("midas_v21", "midas_v21_small"):
+                depth_on_full = paste_into_box(depth_grey, (image_height, image_width), crop_box, resize_if_needed=False)
+            # elif model_name in ("dpt_large", "dpt_beit_large_512"):
+            else:
+                depth_on_full = depth_grey  # already (H, W) == (image_height, image_width)
+
+            # display
+
+            depth_map_diff = -(depth_on_full - depth_grey_phone)/2.0 + 0.5
+
+            print (f"\tSaving output for {model_name} ...")
+            arr = save_rgb_to_float6(FILE_PATH + "/" + file_name.replace("camera", "MOD_"+model_name), rot90k(depth_on_full, -ROTATE_K), alpha=1.0)
+
+            saved_images.append((model_name, depth_on_full, arr))
+
+            print ("\n")
+
+        show_rgb_images(*[img for _, img, _ in saved_images], titles=[name for name, _, _ in saved_images])

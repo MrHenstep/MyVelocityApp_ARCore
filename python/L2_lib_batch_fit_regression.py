@@ -1,4 +1,4 @@
-import lib_extraction_and_visualisation as exv
+import L1_lib_extraction_and_visualisation as exv
 from sklearn.linear_model import LinearRegression
 import matplotlib.pyplot as plt
 import numpy as np
@@ -13,6 +13,12 @@ def fit_regression_model(combined_data_points, weights_sigmoid = None):
     data_x = combined_data_points[:, 2]
     data_y = combined_data_points[:, 4]
     data_w = combined_data_points[:, 3]
+
+    # Exclude data points where data_y is NaN
+    mask = ~np.isnan(data_y)
+    data_x = data_x[mask]
+    data_y = data_y[mask]
+    data_w = data_w[mask]
 
     if weights_sigmoid:
         sigmoid = lambda x: 1 / (1 + np.exp((x - weights_sigmoid[0]) / weights_sigmoid[1]))
@@ -43,7 +49,16 @@ def generate_prediction_points(model, depth_range_for_colour_map, num_points=100
 
     return line_points
 
-def batch_fit_regression_model(file_path, batch_number, depth_point_indices, confidence_level=0.7, depth_range_for_colour_map = (0, 25), weights_sigmoid=None, display_plots=True, match_timestamps=False):
+def batch_fit_regression_model(
+        file_path, 
+        batch_number, 
+        depth_point_indices, 
+        depth_map_file_name_replacement = None, 
+        confidence_level=0.7, 
+        depth_range_for_colour_map = (0, 25), 
+        weights_sigmoid=None, 
+        display_plots=True, 
+        match_timestamps=False):
 
     timestamps_table = exv.read_timestamp_files(file_path, batch_number)
 
@@ -62,12 +77,23 @@ def batch_fit_regression_model(file_path, batch_number, depth_point_indices, con
         depth_points_file = file_name_row[0]
         depth_map_file = file_name_row[3]
 
+        if depth_map_file_name_replacement:
+            depth_map_file = depth_map_file.replace("grey", depth_map_file_name_replacement)
+
+        if "grey" in depth_map_file or "midas_v21" in depth_map_file:
+            width_crop_size = (640 - 480) / 2
+            height_crop_size = 0
+        else:
+            width_crop_size = 0
+            height_crop_size = 0
+
         depth_points_index = int(depth_points_file.split("_")[-1].split(".")[0])
         if (depth_points_index not in depth_point_indices):
             continue
 
         # combined data points: x, y, depth, confidence, depth map value
-        combined_data_points = exv.get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, confidence_level)
+
+        combined_data_points = exv.get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, confidence_level, width_crop_size=width_crop_size, height_crop_size=height_crop_size)
         # exv.plot_histograms_and_regression(combined_data_points, depth_range_for_colour_map)
 
         model, params = fit_regression_model(combined_data_points, weights_sigmoid=weights_sigmoid)
@@ -78,7 +104,7 @@ def batch_fit_regression_model(file_path, batch_number, depth_point_indices, con
         if display_plots:
             exv.plot_histograms_and_regression(combined_data_points, depth_range_for_colour_map, line_points)
 
-        print(file_name_row)
+        # print(file_name_row)
 
         # Append results to the list
         results.append({
@@ -94,7 +120,7 @@ def batch_fit_regression_model(file_path, batch_number, depth_point_indices, con
 
     return df_results
 
-def plot_regression_fits(df_results, invert_axes, depth_max):
+def plot_regression_fits(df_results, invert_axes, depth_max, model_name):
 
     # Plot all lines on the same graph
     plt.figure()
@@ -116,21 +142,66 @@ def plot_regression_fits(df_results, invert_axes, depth_max):
         plt.plot(x_line, y_line, label=f'Row {index}')
 
     if invert_axes:
-        plt.ylabel('metric_depth_line')
-        plt.xlabel('rec_rel_depth_line')
+        plt.ylabel('metric depth')
+        plt.xlabel('rec rel depth')
         plt.ylim(0, depth_max)
 
     else:
-        plt.ylabel('rec_rel_depth_line')
-        plt.xlabel('metric_depth_line')
+        plt.ylabel('rec rel depth')
+        plt.xlabel('metric depth')
         plt.ylim(0, 1)
 
         
     plt.grid(True)
-    plt.title('Metric Depth vs Reciprocal Relative Depth')
+    plt.title(model_name)
     # plt.legend()
     plt.show()
 
+def calculate_regression_line_points(a, b, depth_max, invert_axes, num_points=100):
+    eps = 1e-3
+    if invert_axes:
+        x_line = np.linspace(b + eps, 1.0 + eps, num_points).reshape(-1, 1)
+        y_line = a / (x_line - b)
+    else:
+        x_line = np.linspace(0.0 + eps, depth_max + eps, num_points).reshape(-1, 1)
+        y_line = a / x_line + b
+    return x_line, y_line
+
+def plot_multiple_regression_fits(
+    list_of_df_results, 
+    list_of_invert_axes, 
+    list_of_depth_max, 
+    list_of_model_names,
+    ncols=4
+):
+    n = len(list_of_df_results)
+    nrows = (n + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows), squeeze=False)
+    for idx, (df_results, invert_axes, depth_max, model_name) in enumerate(zip(
+        list_of_df_results, list_of_invert_axes, list_of_depth_max, list_of_model_names
+    )):
+        ax = axes[idx // ncols][idx % ncols]
+        for index, row in df_results.iterrows():
+            a = row['coef']
+            b = row['intercept']
+            x_line, y_line = calculate_regression_line_points(a, b, depth_max, invert_axes)
+            ax.plot(x_line, y_line, label=f'Row {index}')
+        if invert_axes:
+            ax.set_ylabel('metric depth')
+            ax.set_xlabel('rec rel depth')
+            ax.set_ylim(0, depth_max)
+        else:
+            ax.set_ylabel('rec rel depth')
+            ax.set_xlabel('metric depth')
+            ax.set_ylim(0, 1)
+        ax.grid(True)
+        ax.set_title(model_name)
+        # ax.legend()
+    # Hide unused subplots
+    for idx in range(n, nrows * ncols):
+        fig.delaxes(axes[idx // ncols][idx % ncols])
+    plt.tight_layout()
+    plt.show()
 ##################################################################################################################
 
 
@@ -138,13 +209,9 @@ if (__name__ == "__main__"):
 
     ##########################################################################################################
 
-    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250812_1_(frametiming)(indoors)(motion)"
-    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250812_2_(frametiming)(outdoors)(motion)"
-    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250813_1_(5fps)(outside)"
     # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
-    FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250818_1_(5fps)(outside)(tracking)"
+    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
 
-    ###########################################################################################################
 
 
     BATCH_NUMBER = 0
@@ -162,11 +229,22 @@ if (__name__ == "__main__"):
     WEIGHTS_SIGMOID = (X_CUT, X_WIDTH)
 
     INVERT_AXES = False
-    DISPLAY_PLOTS = True
+    DISPLAY_PLOTS = False
 
     ###########################################################################################################
+    depth_map_file_name_replacement = None
 
-    df_results = batch_fit_regression_model(FILE_PATH, BATCH_NUMBER, DEPTH_POINTS_INDICES, CONFIDENCE_LEVEL, DEPTH_RANGE_FOR_COLOUR_MAP, weights_sigmoid=WEIGHTS_SIGMOID, display_plots=DISPLAY_PLOTS, match_timestamps=MATCH_TIMESTAMPS)
+    df_results = batch_fit_regression_model(
+        FILE_PATH,
+        BATCH_NUMBER,
+        DEPTH_POINTS_INDICES,
+        depth_map_file_name_replacement=depth_map_file_name_replacement,
+        confidence_level=CONFIDENCE_LEVEL,
+        depth_range_for_colour_map=DEPTH_RANGE_FOR_COLOUR_MAP,
+        weights_sigmoid=WEIGHTS_SIGMOID,
+        display_plots=DISPLAY_PLOTS,
+        match_timestamps=MATCH_TIMESTAMPS
+    )
 
     plot_regression_fits(df_results, INVERT_AXES, DEPTH_MAX)
 

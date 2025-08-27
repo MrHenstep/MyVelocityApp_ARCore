@@ -2,5 +2,8 @@
     "python.analysis.extraPaths": [
         "./MiDaS"
     ],
-    "cmake.sourceDirectory": "C:/Users/steph/Documents/Projects/AndroidStudioProjects/Velociraptor-app/opencv/libcxx_helper"
+    "cmake.sourceDirectory": "C:/Users/steph/Documents/Projects/AndroidStudioProjects/Velociraptor-app/opencv/libcxx_helper",
+    "cSpell.words": [
+        "nonempty"
+    ]
 }

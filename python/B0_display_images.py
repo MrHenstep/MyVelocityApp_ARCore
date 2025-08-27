@@ -1,14 +1,11 @@
-import lib_extraction_and_visualisation as exv
+import L1_lib_extraction_and_visualisation as exv
 import os
 
 ##########################################################################################################
 
-FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
-# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250819_2_(test-static)"
-# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250819_2_(5ps)(test)"
-# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250819_1_(5fps)(car)(Ziggy)"
-# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250819_3_(test_rotation)"
+# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
 
+FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
 
 ##################################################################################################################
 
@@ -16,9 +13,10 @@ BATCH_NUMBER = 0
 CONFIDENCE_LEVEL = 0.75
 DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, 25.0)
 
-IMAGE_ORIENTATION_ROTATION = 0
+# IMAGE_ORIENTATION_ROTATION = 270    # if the phone is horizontal
+IMAGE_ORIENTATION_ROTATION = 0      # if the phone is vertical
 
-DEPTH_POINTS_INDICES = range(0, 100, 1)
+DEPTH_POINTS_INDICES = range(0, 100, 5)
 
 MATCH_TIMESTAMPS = False
 
@@ -42,9 +40,9 @@ MATCHED_FILENAME_TABLE = exv.get_matched_filenames(MATCHED_INDICES, FILE_PATH, B
 
 exv.batch_display_points_and_images(FILE_PATH, MATCHED_FILENAME_TABLE, CONFIDENCE_LEVEL, TIMESTAMPS_TABLE, MATCHED_INDICES, DEPTH_POINTS_INDICES, DEPTH_RANGE_FOR_COLOUR_MAP, rotation_deg=IMAGE_ORIENTATION_ROTATION)
 
-for row in MATCHED_FILENAME_TABLE:
-    # print(row)
+# for row in MATCHED_FILENAME_TABLE:
+#     # print(row)
 
-    tracked_points = exv.read_float_data_as_nx4(FILE_PATH, row[5])
-    print("Tracked points shape:", tracked_points.shape)
-    print("Tracked points:", tracked_points)
+#     tracked_points = exv.read_float_data_as_nx4(FILE_PATH, row[5])
+#     print("Tracked points shape:", tracked_points.shape)
+#     print("Tracked points:", tracked_points)

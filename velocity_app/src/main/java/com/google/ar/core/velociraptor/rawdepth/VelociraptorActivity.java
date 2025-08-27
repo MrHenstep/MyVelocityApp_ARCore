@@ -28,6 +28,10 @@ import android.graphics.Paint;
 import android.graphics.drawable.Drawable;
 import android.graphics.PointF;
 
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.widget.ImageView;
 
 import android.opengl.GLES20;
@@ -143,7 +147,7 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 
   // Constants determining collection
   private static final int FRAME_THROTTLE_INTERVAL = 6;
-  private static final int MAX_COLLECTED_FRAMES = 2;
+  private static final int MAX_COLLECTED_FRAMES = 20;
 
   // options for putting 4:3 camera image bitmap into Midas 256x256
   private static final boolean CROP_NOT_COMPRESS = true;
@@ -181,6 +185,35 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
   private final AtomicBoolean processingFrames = new AtomicBoolean(false);
 
   private int batchCounter = 0;  // starts at 0
+
+  // In your Activity
+  private SensorManager sensorManager;
+  private Sensor accel;
+  private final float[] aVals = new float[3];
+  private volatile int gravityRotationDeg = 0;  // 0, 90, 180, 270
+
+  private final SensorEventListener gravityListener = new SensorEventListener() {
+    @Override public void onSensorChanged(SensorEvent e) {
+      // Low-pass for stability (optional but nice)
+      final float alpha = 0.8f;
+      aVals[0] = alpha * aVals[0] + (1 - alpha) * e.values[0]; // ax (right +)
+      aVals[1] = alpha * aVals[1] + (1 - alpha) * e.values[1]; // ay (up +)
+      aVals[2] = alpha * aVals[2] + (1 - alpha) * e.values[2]; // az (out of screen +)
+
+      float ax = aVals[0], ay = aVals[1];
+
+      // Decide dominant axis in the screen plane
+      if (Math.abs(ax) > Math.abs(ay)) {
+        // Landscape
+        gravityRotationDeg = (ax > 0) ? 270 : 90;   // ax>0: right side down → rotate 270 (i.e., -90)
+      } else {
+        // Portrait
+        gravityRotationDeg = (ay > 0) ? 180 : 0;    // ay>0: upside-down; ay<0: upright
+      }
+    }
+    @Override public void onAccuracyChanged(Sensor s, int acc) {}
+  };
+
 
   // Member variable to hold last tapped view coords
 //  private PointF tappedPointViewCoords = null;
@@ -315,6 +348,10 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
   protected void onResume() {
     super.onResume();
 
+    sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+    accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+    if (accel != null) sensorManager.registerListener(gravityListener, accel, SensorManager.SENSOR_DELAY_UI);
+
     // if the session is null (i.e. not started),
     if (session == null) {
 
@@ -397,9 +434,14 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 //    messageSnackbarHelper.showMessage(this, "Waiting for depth data...");
   }
 
+
+
+
   @Override
   public void onPause() {
     super.onPause();
+    if (sensorManager != null) sensorManager.unregisterListener(gravityListener);
+
     if (session != null) {
       // Note that the order matters - GLSurfaceView is paused first so that it does not try
       // to query the session. If Session is paused before GLSurfaceView, GLSurfaceView may
@@ -492,6 +534,7 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     try {
       frame = session.update();
       frameData = new FrameData(frame);
+      frameData.gravityRotationDeg = gravityRotationDeg;
     }
     catch (Throwable t) {
       Log.e("onDraw", "FrameData build failed", t);
@@ -919,17 +962,25 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     // -------------------------------------------------------------------------------------------------------------------
     // get camera image and rotate
 
+//    int displayRotation = getWindowManager().getDefaultDisplay().getRotation();
+//    int rotationDegrees = getCameraImageRotationDegrees(this, displayRotation);
+
+//    String backCameraId = getBackCameraId(this);
+//    int rotationDegrees = displayRotationHelper.getCameraSensorToDisplayRotation(backCameraId);
+
+    int rotationDegreesDepth = 270 - frameData.gravityRotationDeg;
+
     int displayRotation = getWindowManager().getDefaultDisplay().getRotation();
     int rotationDegrees = getCameraImageRotationDegrees(this, displayRotation);
 
-    Log.i("processCollectedFrameData", String.format("Display: %d, Rotation: %d", displayRotation, rotationDegrees));
+    Log.i("processCollectedFrameData", String.format("RotationDegrees %d; Rotation Depth: %d; gravity Rotation: %d", rotationDegrees, rotationDegreesDepth, frameData.gravityRotationDeg));
 
     Bitmap cameraBitmap = frameData.getCameraBitmap();
 
     // -------------------------------------------------------------------------------------------------------------------
     // run depth estimation on the camera image
 
-    Bitmap rotatedCameraBitmap = rotateBitmap(cameraBitmap, rotationDegrees);;
+    Bitmap rotatedCameraBitmap = rotateBitmap(cameraBitmap, rotationDegreesDepth);
 
     final int midasWidth = 256;
     final int midasHeight = 256;
@@ -1010,8 +1061,8 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 
     }
 
-    Bitmap depthModelBitmapColour = rotateBitmap(rotatedDepthMapResultColour, -rotationDegrees);
-    Bitmap depthModelBitmapGrey = rotateBitmap(rotatedDepthMapResultGrey, -rotationDegrees);
+    Bitmap depthModelBitmapColour = rotateBitmap(rotatedDepthMapResultColour, -rotationDegreesDepth);
+    Bitmap depthModelBitmapGrey = rotateBitmap(rotatedDepthMapResultGrey, -rotationDegreesDepth);
 
 
 
@@ -1093,7 +1144,7 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 
   }
   catch (Exception e) {
-    Log.e("MyDepth", "Depth estimation failed: " + e.getMessage(), e);
+    Log.e("processCollectedFrameData", "Depth estimation failed: " + e.getMessage(), e);
   }
 
   return newState;
@@ -1210,6 +1261,18 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     }
 
     return 0;
+  }
+
+  private static String getBackCameraId(Context ctx) {
+    try {
+      CameraManager cm = (CameraManager) ctx.getSystemService(Context.CAMERA_SERVICE);
+      for (String id : cm.getCameraIdList()) {
+        CameraCharacteristics c = cm.getCameraCharacteristics(id);
+        Integer facing = c.get(CameraCharacteristics.LENS_FACING);
+        if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) return id;
+      }
+    } catch (CameraAccessException ignored) {}
+    return "0"; // common fallback on many devices
   }
 
 

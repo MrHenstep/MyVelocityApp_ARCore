@@ -28,6 +28,8 @@ public class FrameData {
 
     private static final String TAG = VelociraptorActivity.class.getSimpleName();
 
+    public int gravityRotationDeg;
+
     public ByteBuffer cameraBufferY;
     public ByteBuffer cameraBufferU;
     public ByteBuffer cameraBufferV;

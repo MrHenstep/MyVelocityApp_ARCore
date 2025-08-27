@@ -23,7 +23,8 @@ __pycache__/
 # OpenCV
 opencv/
 
-MiDaS/
+/MiDaS/
+
 MiDaS_weights/
 velocity_app/src/main/assets/*.tflite
 *.pt
@@ -34,3 +35,5 @@ velocity_app/src/main/assets/*.tflite
 *.tflite
 /velocity_app/src/main/assets/*.tflite
 /MiDaS_weights/
+
+tore*

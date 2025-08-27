@@ -68,29 +68,12 @@ def find_closest_timestamp_matches(timestamps_table, search_col, target_col, dir
 
 def print_closest_ts_match(timestamps_array, match_indices):
    
-    # print("\nClosest Matches ...\n")
-    # for i, indices in enumerate(match_indices):
-
-    #     print(f"Row {i}: Frame ts {timestamps_array[indices[1], 1]:.6f}, Camera ts {timestamps_array[indices[1], 2]:.6f}, Depth ts {timestamps_array[indices[0], 3]:.6f}, Confidence ts {timestamps_array[indices[1], 4]:.6f}")
-
     print("\nClosest Matches difference ...\n")
     for i, indices in enumerate(match_indices):
 
         print(f"Row {i}: diff, Frame ts {timestamps_array[indices[1], 1]-timestamps_array[indices[0], 3]:.6f}, Camera ts {timestamps_array[indices[1], 2]-timestamps_array[indices[0], 3]:.6f}, Depth ts {timestamps_array[indices[1], 3]-timestamps_array[indices[0], 3]:.6f}, Confidence ts {timestamps_array[indices[1], 4]-timestamps_array[indices[0], 3]:.6f}")
 
-    # print("\nStatistics on differences vs original depth ts...")
 
-    # diffs = timestamps_array[match_indices[:, 1], 1] - timestamps_array[match_indices[:, 0], 3]
-    # print(f"Frame: Mean: {np.mean(diffs):.6f}, Std: {np.std(diffs):.6f}, Min: {np.min(diffs):.6f}, Max: {np.max(diffs):.6f}")
-
-    # diffs = timestamps_array[match_indices[:, 1], 2] - timestamps_array[match_indices[:, 0], 3]
-    # print(f"Camera: Mean: {np.mean(diffs):.6f}, Std: {np.std(diffs):.6f}, Min: {np.min(diffs):.6f}, Max: {np.max(diffs):.6f}")
-
-    # diffs = timestamps_array[match_indices[:, 1], 2] - timestamps_array[match_indices[:, 0], 3]
-    # print(f"Depth: Mean: {np.mean(diffs):.6f}, Std: {np.std(diffs):.6f}, Min: {np.min(diffs):.6f}, Max: {np.max(diffs):.6f}")
-
-    # diffs = timestamps_array[match_indices[:, 1], 4] - timestamps_array[match_indices[:, 0], 3]
-    # print(f"Confidence: Mean: {np.mean(diffs):.6f}, Std: {np.std(diffs):.6f}, Min: {np.min(diffs):.6f}, Max: {np.max(diffs):.6f}")
 
 def get_all_indices(directory, batch_number):
     pattern = re.compile(rf"batch_{batch_number}_depth_points_(\d+)\.bin")
@@ -314,7 +297,7 @@ def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range)
     return depth_points_bitmap, depth_map_camera_bitmap, depth_map_colour_bitmap, confidence_points_bitmap
 
 def get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, confidence_level,
-                                width=640, height=480):
+                                width=640, height=480, width_crop_size=0, height_crop_size=0):
     """
     Returns N x 5 array: [x, y, depth, confidence, depth_map_value]
     Assumes depth_map_data rows are [x, y, a, r, g, b] and r=g=b (greyscale).
@@ -338,7 +321,7 @@ def get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, co
     yi = depth_points[:, 1].astype(np.int32)
 
     # In-bounds mask
-    inbounds = (xi >= 0) & (xi < width) & (yi >= 0) & (yi < height)
+    inbounds = (xi >= 0 + width_crop_size) & (xi < width - width_crop_size) & (yi >= 0 + height_crop_size) & (yi < height - height_crop_size)
     if not np.any(inbounds):
         return combined
 
@@ -496,12 +479,8 @@ if (__name__ == "__main__"):
 
     ##########################################################################################################
 
-    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250812_1_(frametiming)(indoors)(motion)"
-    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250812_2_(frametiming)(outdoors)(motion)"
-    FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\20250813_1_(5fps)(outside)"
-
-
-    ##################################################################################################################
+    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
 
     BATCH_NUMBER = 0
     CONFIDENCE_LEVEL = 0.75
@@ -527,6 +506,7 @@ if (__name__ == "__main__"):
     print_closest_ts_match(TIMESTAMPS_TABLE, MATCHED_INDICES)
     FILENAME_TABLE = get_matched_filenames(MATCHED_INDICES, FILE_PATH, BATCH_NUMBER)
 
+    depth_map_file_name_replacement = None
     batch_display_points_and_images(FILE_PATH, FILENAME_TABLE, CONFIDENCE_LEVEL, TIMESTAMPS_TABLE, MATCHED_INDICES, DEPTH_POINTS_INDICES, depth_range=DEPTH_RANGE_FOR_COLOUR_MAP)
 
     batch_display_histograms_and_regression(FILE_PATH, FILENAME_TABLE, DEPTH_POINTS_INDICES, CONFIDENCE_LEVEL, depth_range=DEPTH_RANGE_FOR_COLOUR_MAP)
