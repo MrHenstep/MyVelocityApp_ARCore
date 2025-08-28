@@ -5,16 +5,16 @@ import os
 
 # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
 
-FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_static_test"
 
 ##################################################################################################################
 
 BATCH_NUMBER = 0
 CONFIDENCE_LEVEL = 0.75
-DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, 25.0)
+DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, 3.0)
 
-# IMAGE_ORIENTATION_ROTATION = 270    # if the phone is horizontal
-IMAGE_ORIENTATION_ROTATION = 0      # if the phone is vertical
+IMAGE_ORIENTATION_ROTATION = 270    # if the phone is horizontal
+# IMAGE_ORIENTATION_ROTATION = 0      # if the phone is vertical
 
 DEPTH_POINTS_INDICES = range(0, 100, 5)
 

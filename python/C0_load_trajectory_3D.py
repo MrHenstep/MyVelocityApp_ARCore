@@ -3,6 +3,8 @@ from typing import Tuple, Dict
 import numpy as np
 import pandas as pd
 import L1_lib_extraction_and_visualisation as exv
+import matplotlib.pyplot as plt
+
 
 def read_trajectory_csv(path: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict[str, str]]:
     """
@@ -119,7 +121,7 @@ if __name__ == "__main__":
 
 
     # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
-    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_static_test"
 
     FILE_NAME_LIST = [
         "batch_0_trajectories_3D_Phone_midas_v21_small_Phone_openCV_LK.csv"
@@ -128,11 +130,16 @@ if __name__ == "__main__":
         ,"batch_0_trajectories_3D_depth_anything_v2_large_CT2.csv"
     ]
 
-    for batch_number in [0, 1]:
+    BATCH_NUMBER_LIST = [0, 1, 2, 3]
+
+    old_batch_mask = "batch_0"
+
+    for batch_number in BATCH_NUMBER_LIST:
 
         batch_mask = f"batch_{batch_number}"
 
-        FILE_NAME_LIST = [fn.replace("batch_0", batch_mask) for fn in FILE_NAME_LIST]
+        FILE_NAME_LIST = [fn.replace(old_batch_mask, batch_mask) for fn in FILE_NAME_LIST]
+        old_batch_mask = batch_mask
 
         timestamps = exv.read_timestamp_files(FILE_PATH, batch_number)
 
@@ -174,9 +181,7 @@ if __name__ == "__main__":
             rms_abs_v = np.sqrt(np.mean(trajectory_camera0.loc[1:, "abs_v"]**2))
             print(f"RMS abs_v for {model_name}: {rms_abs_v:.4f}")
 
-        import matplotlib.pyplot as plt
-
-        plt.figure(figsize=(10, 6))
+        plt.figure(figsize=(8, 5))
         color = '#4B6A88'  # Use the same blue-grey for all lines
         linestyles = ['-', '--', '-.', ':']
         for i, (model_name, traj_df) in enumerate(trajectories.items()):

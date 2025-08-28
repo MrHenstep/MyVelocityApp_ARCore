@@ -118,6 +118,23 @@ def write_trajectories(file_path, batch_number, traj_xy):
 
     print(f"Wrote {traj_xy.shape[0]} files to {file_path}")
 
+def read_trajectories(file_path, batch_number):
+    """
+    Loads traj_xy and vis from files written by write_trajectories.
+    Returns:
+        traj_xy: (T,2) numpy array of float32
+        vis: (T,) numpy array of float32 (all ones, since visibility is not stored)
+    """
+    pattern = os.path.join(file_path, f"batch_{batch_number}_tracked_point_MOD_CT2_*.bin")
+    files = sorted(glob.glob(pattern), key=lambda x: int(os.path.splitext(os.path.basename(x))[0].split('_')[-1]))
+    traj_xy = []
+    for f in files:
+        arr = np.fromfile(f, dtype="<f4")
+        traj_xy.append(arr[:2])
+    traj_xy = np.stack(traj_xy, axis=0)
+    vis = np.ones(traj_xy.shape[0], dtype=np.float32)
+    return traj_xy, vis
+
 ##################################################################################################
 
 if __name__ == "__main__":
@@ -129,64 +146,38 @@ if __name__ == "__main__":
     IMAGE_HEIGHT, IMAGE_WIDTH = 480, 640  
 
     # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
-    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_static_test"
 
+
+    BATCH_NUMBER_LIST = [0, 1, 2, 3]
     
-    BATCH_NUMBER = 1
+    for batch_number in BATCH_NUMBER_LIST:
 
-    INITIAL_POINT_FILE_NAME = f"batch_{BATCH_NUMBER}_tracked_point_0.bin"
+        INITIAL_POINT_FILE_NAME = f"batch_{batch_number}_tracked_point_0.bin"
 
-    # ROTATE_FOR_DISPLAY = cv2.ROTATE_90_CLOCKWISE # if phone vertical
-    ROTATE_FOR_DISPLAY = None # if phone horizontal
+        # ROTATE_FOR_DISPLAY = cv2.ROTATE_90_CLOCKWISE # if phone vertical
+        ROTATE_FOR_DISPLAY = None # if phone horizontal
+ 
 
-    # Load initial point
-    init_tracked_coords = exv.read_float_data_as_nx4(FILE_PATH, INITIAL_POINT_FILE_NAME)[0,:2]
-    x0, y0 = init_tracked_coords
-    t0 = 0
-    queries = make_queries(x0, y0, t0, device=DEVICE)
-    # print(x0, y0)
+        # Compile frame file list
+        MATCHED_INDICES = exv.get_all_indices(FILE_PATH, batch_number)
+        MATCHED_FILENAME_TABLE = exv.get_matched_filenames(MATCHED_INDICES, FILE_PATH, batch_number)
 
+        camera_filenames_list = [row[1] for row in MATCHED_FILENAME_TABLE]
 
-    # Compile frame file list
-    MATCHED_INDICES = exv.get_all_indices(FILE_PATH, BATCH_NUMBER)
-    MATCHED_FILENAME_TABLE = exv.get_matched_filenames(MATCHED_INDICES, FILE_PATH, BATCH_NUMBER)
-
-    camera_filenames_list = [row[1] for row in MATCHED_FILENAME_TABLE]
-
-    # Load frames
-    frames = load_sequence_from_files(FILE_PATH, camera_filenames_list, H=480, W=640)     # (T,480,640,3)
-
-    # Make video tensor
-    video  = to_video_tensor(frames, device=DEVICE)            # (1,T,3,480,640)
-
-    # Track points
-    print("Tracking points...", flush=True)
-    start_time = time.time()
-
-    with torch.inference_mode():
-        pred_tracks, pred_visibility = cotracker(video, queries=queries, grid_size=0)
-
-    end_time = time.time()
-    print(f" {end_time - start_time:.2f} seconds")
-
-    # extract and visualise results
-    traj_xy = pred_tracks[0, :, 0, :].detach().cpu().numpy()   # (T,2) pixel coords
-    vis = pred_visibility[0, :, 0].detach().cpu().numpy()  # shape (T,)
-
-    painted = render_tracks(frames, traj_xy, vis)
-    
-    if ROTATE_FOR_DISPLAY is not None:
-        painted = np.array([cv2.rotate(img, ROTATE_FOR_DISPLAY) for img in painted])
-    else:
-        painted = painted  # leave as is
-
-    plot_frames_and_point(painted)
-
-    write_trajectories(
-        file_path=r"c:\Users\steph\Documents\Projects\AndroidStudioProjects\Velociraptor-app\exported",
-        batch_number=BATCH_NUMBER,
-        traj_xy=traj_xy  # shape (T,2)
-    )
+        # Load frames
+        frames = load_sequence_from_files(FILE_PATH, camera_filenames_list, H=480, W=640)     # (T,480,640,3)
 
 
+        traj_xy, vis = read_trajectories(FILE_PATH, batch_number)
+
+        painted = render_tracks(frames, traj_xy, vis)
+        
+        if ROTATE_FOR_DISPLAY is not None:
+            painted = np.array([cv2.rotate(img, ROTATE_FOR_DISPLAY) for img in painted])
+        else:
+            painted = painted  # leave as is
+
+        plot_frames_and_point(painted)
 

@@ -459,10 +459,9 @@ if __name__ == "__main__":
 
     # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
 
-    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_static_test"
 
-
-    BATCH_NUMBER = 1
 
     CROP_NOT_SCALE = True
 
@@ -485,63 +484,67 @@ if __name__ == "__main__":
 
     ###############################################################################################################
 
-    MATCHED_INDICES = exv.get_all_indices(FILE_PATH, BATCH_NUMBER)
-    MATCHED_FILENAME_TABLE = exv.get_matched_filenames(MATCHED_INDICES, FILE_PATH, BATCH_NUMBER)
+    BATCH_NUMBER_LIST = [0, 1, 2, 3]
 
-    for index, row in enumerate(MATCHED_FILENAME_TABLE):
+    for batch_number in BATCH_NUMBER_LIST:
 
-        # if (index != 0): continue
+        MATCHED_INDICES = exv.get_all_indices(FILE_PATH, batch_number)
+        MATCHED_FILENAME_TABLE = exv.get_matched_filenames(MATCHED_INDICES, FILE_PATH, batch_number)
 
-        file_name = row[1]  # camera file
+        for index, row in enumerate(MATCHED_FILENAME_TABLE):
 
-        depth_grey_phone_original = load_rgb_from_float6(FILE_PATH, file_name.replace("camera", "grey"), 480, 640)
-        depth_grey_phone = rot90k(depth_grey_phone_original, ROTATE_K)
+            # if (index != 0): continue
 
-        rgb_original = load_rgb_from_float6(FILE_PATH, file_name, 480, 640)
-        rgb = rot90k(rgb_original, ROTATE_K)
-        image_height, image_width = rgb.shape[:2]
+            file_name = row[1]  # camera file
+
+            depth_grey_phone_original = load_rgb_from_float6(FILE_PATH, file_name.replace("camera", "grey"), 480, 640)
+            depth_grey_phone = rot90k(depth_grey_phone_original, ROTATE_K)
+
+            rgb_original = load_rgb_from_float6(FILE_PATH, file_name, 480, 640)
+            rgb = rot90k(rgb_original, ROTATE_K)
+            image_height, image_width = rgb.shape[:2]
 
 
-        saved_images = []
-        saved_images.append((file_name, rgb, None))
-        saved_images.append((file_name.replace("camera", "grey"), depth_grey_phone, None))
+            saved_images = []
+            saved_images.append((file_name, rgb, None))
+            saved_images.append((file_name.replace("camera", "grey"), depth_grey_phone, None))
 
-        for model_name in model_name_list:
-            
-            print(f"Running {model_name} on image file {file_name} ...")
+            for model_name in model_name_list:
+                
+                print(f"Running {model_name} on image file {file_name} ...")
 
-            print (f"\tLoading {model_name} ...")
-            model, target_size = load_model(model_name, MIDAS_MODEL_WEIGHTS)
+                print (f"\tLoading {model_name} ...")
+                model, target_size = load_model(model_name, MIDAS_MODEL_WEIGHTS)
 
-            print (f"\tPreparing input for {model_name} ...")
-            input_image, crop_box, height_in_image, width_in_image = get_model_input(rgb, model_name, CROP_NOT_SCALE)
+                print (f"\tPreparing input for {model_name} ...")
+                input_image, crop_box, height_in_image, width_in_image = get_model_input(rgb, model_name, CROP_NOT_SCALE)
 
-            print(f"\tRunning inference for {model_name} ...", end="", flush=True)
-            start_time = time.time()
-            with torch.no_grad():
-                pred = model(input_image)  # MiDaS_small output
-            end_time = time.time()
-            print(f" {end_time - start_time:.2f} seconds")
-            
+                print(f"\tRunning inference for {model_name} ...", end="", flush=True)
+                start_time = time.time()
+                with torch.no_grad():
+                    pred = model(input_image)  # MiDaS_small output
+                end_time = time.time()
+                print(f" {end_time - start_time:.2f} seconds")
+                
 
-            print (f"\tPost-processing output for {model_name} ...")
-            depth_grey = midas_pred_to_grey(pred, (height_in_image, width_in_image), mode="bilinear")
+                print (f"\tPost-processing output for {model_name} ...")
+                depth_grey = midas_pred_to_grey(pred, (height_in_image, width_in_image), mode="bilinear")
 
-            if model_name in ("midas_v21", "midas_v21_small"):
-                depth_on_full = paste_into_box(depth_grey, (image_height, image_width), crop_box, resize_if_needed=False)
-            # elif model_name in ("dpt_large", "dpt_beit_large_512"):
-            else:
-                depth_on_full = depth_grey  # already (H, W) == (image_height, image_width)
+                if model_name in ("midas_v21", "midas_v21_small"):
+                    depth_on_full = paste_into_box(depth_grey, (image_height, image_width), crop_box, resize_if_needed=False)
+                # elif model_name in ("dpt_large", "dpt_beit_large_512"):
+                else:
+                    depth_on_full = depth_grey  # already (H, W) == (image_height, image_width)
 
-            # display
+                # display
 
-            depth_map_diff = -(depth_on_full - depth_grey_phone)/2.0 + 0.5
+                depth_map_diff = -(depth_on_full - depth_grey_phone)/2.0 + 0.5
 
-            print (f"\tSaving output for {model_name} ...")
-            arr = save_rgb_to_float6(FILE_PATH + "/" + file_name.replace("camera", "MOD_"+model_name), rot90k(depth_on_full, -ROTATE_K), alpha=1.0)
+                print (f"\tSaving output for {model_name} ...")
+                arr = save_rgb_to_float6(FILE_PATH + "/" + file_name.replace("camera", "MOD_"+model_name), rot90k(depth_on_full, -ROTATE_K), alpha=1.0)
 
-            saved_images.append((model_name, depth_on_full, arr))
+                saved_images.append((model_name, depth_on_full, arr))
 
-            print ("\n")
+                print ("\n")
 
-        show_rgb_images(*[img for _, img, _ in saved_images], titles=[name for name, _, _ in saved_images])
+            show_rgb_images(*[img for _, img, _ in saved_images], titles=[name for name, _, _ in saved_images])

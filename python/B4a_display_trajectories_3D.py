@@ -141,6 +141,103 @@ def write_transformation_data_to_file(filename, depth_model_name, tracking_model
         for index, points in enumerate(tracked_points_ref):
             for point in points:
                 f.write(f"Frame {index}," + ",".join(map(str, point)) + "\n")
+
+def read_transformation_data_from_file(filename):
+    """
+    Reads a file produced by write_transformation_data_to_file and reconstructs:
+      depth_model_name, tracking_model_name, extrinsic_matrices,
+      tracked_points_cam, tracked_points_ref
+    """
+    with open(filename, "r") as f:
+        # strip newlines; keep empty lines to detect matrix breaks
+        lines = [line.strip() for line in f.readlines()]
+
+    # --- Find header (skip any leading blank lines/BOM) ---
+    i = 0
+    while i < len(lines) and lines[i] == "":
+        i += 1
+    if i >= len(lines):
+        raise ValueError("File is empty or contains only blank lines.")
+
+    header_line = lines[i].lstrip("\ufeff")  # strip possible UTF-8 BOM
+    # Expect "depth_model_name, tracking_model_name"
+    if "," not in header_line:
+        raise ValueError(f"Header line does not contain a comma: {header_line!r}")
+    depth_model_name, tracking_model_name = [s.strip() for s in header_line.split(",", 1)]
+    i += 1  # move past header
+
+    # --- Prepare containers ---
+    extrinsic_matrices = []
+    tracked_points_cam = []
+    tracked_points_ref = []
+
+    section = None
+    matrix_buf = []
+
+    # --- Helper to flush any pending matrix rows ---
+    def flush_matrix():
+        nonlocal matrix_buf
+        if matrix_buf:
+            extrinsic_matrices.append(matrix_buf)
+            matrix_buf = []
+
+    # --- Main parse loop ---
+    while i < len(lines):
+        line = lines[i]
+        i += 1
+
+        # Section headers
+        if line.startswith("Extrinsic Matrices:"):
+            flush_matrix()  # just in case
+            section = "extrinsics"
+            continue
+        if line.startswith("Tracked points in camera frame:"):
+            flush_matrix()
+            section = "cam_points"
+            continue
+        if line.startswith("Tracked points in reference frame:"):
+            flush_matrix()
+            section = "ref_points"
+            continue
+
+        # Blank line handling
+        if line == "":
+            # inside extrinsics, blank line separates individual matrices
+            if section == "extrinsics":
+                flush_matrix()
+            # otherwise blanks are just separators; ignore
+            continue
+
+        # Content per section
+        if section == "extrinsics":
+            # Comma-separated floats form a row of the current matrix
+            row_vals = [float(x) for x in line.split(",")]
+            matrix_buf.append(row_vals)
+
+        elif section in ("cam_points", "ref_points"):
+            # Format written: "Frame {index},<v1>,<v2>,<v3>,<v4?>"
+            parts = [p.strip() for p in line.split(",")]
+            if not parts or not parts[0].startswith("Frame "):
+                raise ValueError(f"Bad point line (missing 'Frame i,'): {line!r}")
+            frame_idx = int(parts[0][len("Frame "):])
+            coords = tuple(float(x) for x in parts[1:])
+            target = tracked_points_cam if section == "cam_points" else tracked_points_ref
+            # ensure list is large enough
+            while len(target) <= frame_idx:
+                target.append([])
+            target[frame_idx].append(coords)
+
+        else:
+            # Lines before any section headers are expected to be blank; tolerate them
+            continue
+
+    # Flush any trailing matrix
+    flush_matrix()
+
+    return depth_model_name, tracking_model_name, extrinsic_matrices, tracked_points_cam, tracked_points_ref
+
+
+
 ###########################################################################################################
 
 if __name__ == "__main__":
@@ -212,15 +309,8 @@ if __name__ == "__main__":
                 else:
                     tracking_map_file_name_replacement = "MOD_"+tracking_model_name
 
-                # Get 3D points and extrinsics for batch        
-                extrinsic_matrices, tracked_points_cam, tracked_points_ref = get_batch_3d_and_extrinsics(
-                    FILE_PATH, 
-                    MATCHED_FILENAME_TABLE, 
-                    depth_map_file_name_replacement=depth_map_file_name_replacement, tracking_file_name_replacement=tracking_map_file_name_replacement, 
-                    width=WIDTH, 
-                    height=HEIGHT, 
-                    frame_inclusion_list=FRAME_INCLUSION_LIST, 
-                    regression_results=regression
+                depth_model_name, tracking_model_name, extrinsic_matrices, tracked_points_cam, tracked_points_ref = read_transformation_data_from_file(
+                    FILE_PATH + "\\" + f"batch_{batch_number}_trajectories_3D_{depth_model_name}_{tracking_model_name}.csv"
                 )
 
                 print_transformation_data(
@@ -230,13 +320,3 @@ if __name__ == "__main__":
                     tracked_points_cam=tracked_points_cam, 
                     tracked_points_ref=tracked_points_ref
                 )
-
-                write_transformation_data_to_file(
-                    FILE_PATH + "\\" + f"batch_{batch_number}_trajectories_3D_{depth_model_name}_{tracking_model_name}.csv", 
-                    depth_model_name, 
-                    tracking_model_name, 
-                    extrinsic_matrices, 
-                    tracked_points_cam, 
-                    tracked_points_ref
-                )
-                

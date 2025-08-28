@@ -25,3 +25,4 @@ result = subprocess.run(["adb", "pull", device_path, local_path], capture_output
 print("STDOUT:", result.stdout)
 print("STDERR:", result.stderr)
 
+
