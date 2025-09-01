@@ -102,16 +102,19 @@ def plot_frames_and_point(rotated):
     plt.tight_layout()
     plt.show()
 
-def write_trajectories(file_path, batch_number, traj_xy):
+def write_trajectories(file_path, batch_number, traj_xy, vis):
 
     traj_xy = np.asarray(traj_xy, dtype=np.float32)
+    vis = np.asarray(vis, dtype=np.float32)
     if traj_xy.ndim != 2 or traj_xy.shape[1] != 2:
         raise ValueError(f"traj_xy must be shape (T,2); got {traj_xy.shape}")
+    if vis.shape[0] != traj_xy.shape[0]:
+        raise ValueError(f"vis must have same length as traj_xy; got {vis.shape[0]} vs {traj_xy.shape[0]}")
 
     os.makedirs(file_path, exist_ok=True)
 
-    for frame, (x, y) in enumerate(traj_xy):
-        row = np.array([x, y, x, y], dtype="<f4")  # little-endian float32
+    for frame, ((x, y), v) in enumerate(zip(traj_xy, vis)):
+        row = np.array([x, y, x, y, v], dtype="<f4")  # little-endian float32
         filename = f"batch_{batch_number}_tracked_point_MOD_CT2_{frame}.bin"
         out_path = os.path.join(file_path, filename)
         row.tofile(out_path)
@@ -128,13 +131,14 @@ if __name__ == "__main__":
 
     IMAGE_HEIGHT, IMAGE_WIDTH = 480, 640  
 
-    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
-    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
-    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_static_test"
+    FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+
+    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
 
 
+    # BATCH_NUMBER_LIST = [0, 1, 2, 3]
     BATCH_NUMBER_LIST = [0, 1, 2, 3]
-    
+
     for batch_number in BATCH_NUMBER_LIST:
 
         INITIAL_POINT_FILE_NAME = f"batch_{batch_number}_tracked_point_0.bin"
@@ -143,7 +147,7 @@ if __name__ == "__main__":
         ROTATE_FOR_DISPLAY = None # if phone horizontal
 
         # Load initial point
-        init_tracked_coords = exv.read_float_data_as_nx4(FILE_PATH, INITIAL_POINT_FILE_NAME)[0,:2]
+        init_tracked_coords = exv.read_float_data_as_nxm(FILE_PATH, INITIAL_POINT_FILE_NAME)[0,:2]
         x0, y0 = init_tracked_coords
         t0 = 0
         queries = make_queries(x0, y0, t0, device=DEVICE)
@@ -188,7 +192,8 @@ if __name__ == "__main__":
         write_trajectories(
             file_path=FILE_PATH,
             batch_number=batch_number,
-            traj_xy=traj_xy  # shape (T,2)
+            traj_xy=traj_xy,
+            vis=vis
         )
 
 

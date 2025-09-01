@@ -123,16 +123,18 @@ def read_trajectories(file_path, batch_number):
     Loads traj_xy and vis from files written by write_trajectories.
     Returns:
         traj_xy: (T,2) numpy array of float32
-        vis: (T,) numpy array of float32 (all ones, since visibility is not stored)
+        vis: (T,) numpy array of float32 (from the last column of each file)
     """
     pattern = os.path.join(file_path, f"batch_{batch_number}_tracked_point_MOD_CT2_*.bin")
     files = sorted(glob.glob(pattern), key=lambda x: int(os.path.splitext(os.path.basename(x))[0].split('_')[-1]))
     traj_xy = []
+    vis = []
     for f in files:
         arr = np.fromfile(f, dtype="<f4")
         traj_xy.append(arr[:2])
+        vis.append(arr[-1])
     traj_xy = np.stack(traj_xy, axis=0)
-    vis = np.ones(traj_xy.shape[0], dtype=np.float32)
+    vis = np.array(vis, dtype=np.float32)
     return traj_xy, vis
 
 ##################################################################################################
@@ -140,17 +142,18 @@ def read_trajectories(file_path, batch_number):
 if __name__ == "__main__":
 
     # Load CoTracker 2
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    cotracker = torch.hub.load("facebookresearch/co-tracker", "cotracker2").to(DEVICE).eval()
+    # DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    # cotracker = torch.hub.load("facebookresearch/co-tracker", "cotracker2").to(DEVICE).eval()
 
     IMAGE_HEIGHT, IMAGE_WIDTH = 480, 640  
 
     # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
-    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
-    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_static_test"
+    
+    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
 
 
-    BATCH_NUMBER_LIST = [0, 1, 2, 3]
+    # BATCH_NUMBER_LIST = [0, 1, 2, 3]
+    BATCH_NUMBER_LIST = [0]
     
     for batch_number in BATCH_NUMBER_LIST:
 

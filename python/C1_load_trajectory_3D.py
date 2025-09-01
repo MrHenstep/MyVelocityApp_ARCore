@@ -117,11 +117,83 @@ def read_trajectory_csv(path: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataF
 
     return extrinsics_df, cam_coords_df, ref_coords_df, meta
 
+def plot_trajectory_measures(trajectories, batch_mask, item, plot_label, title, y_min=None, y_max=None, shrink=1.0, measured_df=None, err_st_dev = 1.0):
+    """
+    Plot trajectory measures with an optional shrink factor to scale the plot size and legend.
+    If measured_df is provided, plot its non-null t_mid and |v| meas values as a series.
+    For speed or dX, dY, dZ columns, plot against the average of the time in that row and the previous row.
+    """
+    base_width, base_height = 8, 5
+    plt.figure(figsize=(base_width * shrink, base_height * shrink))
+    color = '#4B6A88'  # Use the same blue-grey for all lines
+    linestyles = ['-', '--', '-.', ':']
+    skip_first = item in {"abs_v", "dX", "dY", "dZ"}
+    for i, (model_name, traj_df) in enumerate(trajectories.items()):
+        if skip_first:
+            # Compute t_mid as the average of t and previous t
+            t_vals = traj_df["t"].values
+            t_mid = (t_vals[1:] + t_vals[:-1]) / 2
+            y_vals = traj_df[item].values[1:]
+            plt.plot(
+                t_mid,
+                y_vals,
+                label=model_name,
+                color=color,
+                linestyle=linestyles[i % len(linestyles)]
+            )
+        else:
+            plt.plot(
+                traj_df["t"],
+                traj_df[item],
+                label=model_name,
+                color=color,
+                linestyle=linestyles[i % len(linestyles)]
+            )
+
+    # Plot measured_df if provided
+    if measured_df is not None and "t_mid" in measured_df.columns and "|v| meas" in measured_df.columns:
+        mask = measured_df["t_mid"].notnull() & measured_df["|v| meas"].notnull()
+        if mask.any():
+            # Check for error columns
+            has_sig_v = "sig_v" in measured_df.columns
+            has_sig_t = "sig_t" in measured_df.columns
+            x = measured_df.loc[mask, "t_mid"]
+            y = measured_df.loc[mask, "|v| meas"]
+            xerr = err_st_dev*measured_df.loc[mask, "sig_t"] if has_sig_t else None
+            yerr = err_st_dev*measured_df.loc[mask, "sig_v"] if has_sig_v else None
+            plt.errorbar(
+                x,
+                y,
+                xerr=xerr,
+                yerr=yerr,
+                fmt='o',
+                label="Measured |v|",
+                color='#A94442',  # dull red
+                markersize=1,
+                linestyle='None',
+                capsize=3
+            )
+
+    plt.xlabel("t (s)")
+    plt.ylabel(plot_label)
+    plt.title(f"{title}, {batch_mask}")
+    plt.grid(True)
+    if y_min is not None or y_max is not None:
+        plt.ylim(bottom=y_min, top=y_max)
+    plt.tight_layout()
+    # Scale legend font size with shrink
+    legend_fontsize = max(8, int(10 * shrink))
+    plt.legend(fontsize=legend_fontsize)
+    plt.show()
+
 if __name__ == "__main__":
 
 
     # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
-    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_static_test"
+
+
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_30_2"
+    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
 
     FILE_NAME_LIST = [
         "batch_0_trajectories_3D_Phone_midas_v21_small_Phone_openCV_LK.csv"
@@ -131,12 +203,20 @@ if __name__ == "__main__":
     ]
 
     BATCH_NUMBER_LIST = [0, 1, 2, 3]
+    # BATCH_NUMBER_LIST = [3]
 
     old_batch_mask = "batch_0"
 
     for batch_number in BATCH_NUMBER_LIST:
 
         batch_mask = f"batch_{batch_number}"
+
+        measured_traj_path = Path(FILE_PATH) / f"batch_{batch_number}_measured_trajectory.csv"
+        if measured_traj_path.exists():
+            measured_df = pd.read_csv(measured_traj_path)
+            print(f"Loaded measured trajectories: {measured_df.shape}")
+        else:
+            measured_df = None
 
         FILE_NAME_LIST = [fn.replace(old_batch_mask, batch_mask) for fn in FILE_NAME_LIST]
         old_batch_mask = batch_mask
@@ -163,6 +243,8 @@ if __name__ == "__main__":
                 combined_matrix = np.linalg.inv(extrinsic_matrix_0) @ extrinsic_matrix
                 
                 coords_cam_frame_0 = combined_matrix @ cam_coords_df.loc[frame, "coord"]
+                X, Y, Z = coords_cam_frame_0[:3]
+                abs_R = np.sqrt(X**2 + Y**2 + Z**2)
 
                 if frame > 0:
                     prev_coords = trajectory_camera0.loc[frame - 1, ["X", "Y", "Z"]].values
@@ -175,28 +257,23 @@ if __name__ == "__main__":
                 trajectory_camera0.loc[frame, "t"] = t
                 trajectory_camera0.loc[frame, ["dX", "dY", "dZ", "abs_v"]] = (dX, dY, dZ, abs_v) if frame > 0 else (0.0, 0.0, 0.0, 0.0)
                 trajectory_camera0.loc[frame, ["X", "Y", "Z"]] = coords_cam_frame_0[:3]
+                trajectory_camera0.loc[frame, "abs_R"] = abs_R
 
             trajectories[model_name] = trajectory_camera0     
 
             rms_abs_v = np.sqrt(np.mean(trajectory_camera0.loc[1:, "abs_v"]**2))
             print(f"RMS abs_v for {model_name}: {rms_abs_v:.4f}")
 
-        plt.figure(figsize=(8, 5))
-        color = '#4B6A88'  # Use the same blue-grey for all lines
-        linestyles = ['-', '--', '-.', ':']
-        for i, (model_name, traj_df) in enumerate(trajectories.items()):
-            plt.plot(
-            traj_df["t"],
-            traj_df["abs_v"],
-            label=model_name,
-            color=color,
-            linestyle=linestyles[i % len(linestyles)]
-            )
+        plot_trajectory_measures(trajectories, batch_mask, "X", "X (m)", "X coordinate vs time", shrink=0.7)
+        plot_trajectory_measures(trajectories, batch_mask, "Y", "Y (m)", "Y coordinate vs time", shrink=0.7)
+        plot_trajectory_measures(trajectories, batch_mask, "Z", "Z (m)", "Z coordinate vs time", shrink=0.7)
 
-        plt.xlabel("t (s)")
-        plt.ylabel("|v| (ms$^{-1}$)")
-        plt.title(f"Speed vs time, {batch_mask}")
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        plt.show()
+        plot_trajectory_measures(trajectories, batch_mask, "abs_R", "|r| (m)", "Distance from origin vs time", shrink=0.7)
+        if batch_number == 1 or batch_number == 3:
+            y_min = 0.0
+            y_max = 1.0
+        else:
+            y_min = None
+            y_max = None
+        plot_trajectory_measures(trajectories, batch_mask, "abs_v", "|v| (m/s)", "Speed vs time", shrink=0.7, measured_df=measured_df, err_st_dev=2.0, y_max=y_max, y_min=y_min)
+

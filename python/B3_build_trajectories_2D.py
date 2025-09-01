@@ -2,11 +2,13 @@
 import L1_lib_extraction_and_visualisation as exv
 import numpy as np
 
-# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
-# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
-FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_static_test"
+FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+
+FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
+
 
 BATCH_NUMBER_LIST = [0, 1, 2, 3]
+
 
 for batch_number in BATCH_NUMBER_LIST:
 
@@ -21,8 +23,8 @@ for batch_number in BATCH_NUMBER_LIST:
         phone_point_file_name = row[5]
         cotracker2_point_file_name = phone_point_file_name.replace("tracked_point", "tracked_point_MOD_CT2")
 
-        phone_xy = exv.read_float_data_as_nx4(FILE_PATH, phone_point_file_name)[0, :2]
-        cotracker2_xy = exv.read_float_data_as_nx4(FILE_PATH, cotracker2_point_file_name)[0, :2]  
+        phone_xy = exv.read_float_data_as_nxm(FILE_PATH, phone_point_file_name, m=4)[0, :2]
+        cotracker2_xy = exv.read_float_data_as_nxm(FILE_PATH, cotracker2_point_file_name, m=5)[0, :2]  
         diff_xy = phone_xy - cotracker2_xy
 
         print(f"Frame {iFrame:3d} | Phone XY: {phone_xy[0]:8.3f}, {phone_xy[1]:8.3f} | "

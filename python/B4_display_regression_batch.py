@@ -14,8 +14,11 @@ if __name__ == "__main__":
     ##########################################################################################################
 
     # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
-    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_static_test"
-
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_static_test"
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_28_1"
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_28_2"
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_28_4"
+    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
 
     ###########################################################################################################
 
@@ -42,7 +45,8 @@ if __name__ == "__main__":
     ###########################################################################################################
 
 
-    BATCH_NUMBER_LIST = [0, 1, 2, 3]
+    # BATCH_NUMBER_LIST = [0, 1, 2, 3]
+    BATCH_NUMBER_LIST = [0, 1]
 
     for batch_number in BATCH_NUMBER_LIST:
         

@@ -460,8 +460,9 @@ if __name__ == "__main__":
     # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
 
     # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
-    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_static_test"
-
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_static_test"
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_30_2"
+    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
 
     CROP_NOT_SCALE = True
 
@@ -521,8 +522,10 @@ if __name__ == "__main__":
 
                 print(f"\tRunning inference for {model_name} ...", end="", flush=True)
                 start_time = time.time()
+                
                 with torch.no_grad():
-                    pred = model(input_image)  # MiDaS_small output
+                    pred = model(input_image)  
+                
                 end_time = time.time()
                 print(f" {end_time - start_time:.2f} seconds")
                 
@@ -532,12 +535,10 @@ if __name__ == "__main__":
 
                 if model_name in ("midas_v21", "midas_v21_small"):
                     depth_on_full = paste_into_box(depth_grey, (image_height, image_width), crop_box, resize_if_needed=False)
-                # elif model_name in ("dpt_large", "dpt_beit_large_512"):
                 else:
                     depth_on_full = depth_grey  # already (H, W) == (image_height, image_width)
 
-                # display
-
+                
                 depth_map_diff = -(depth_on_full - depth_grey_phone)/2.0 + 0.5
 
                 print (f"\tSaving output for {model_name} ...")

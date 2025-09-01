@@ -80,6 +80,6 @@ if __name__ == "__main__":
 
     file_name = MATCHED_FILENAME_TABLE[0][0]
 
-    pts = exv.read_float_data_as_nx4(FILE_PATH, file_name)
+    pts = exv.read_float_data_as_nxm(FILE_PATH, file_name)
 
     print(f"Tracked points shape: {pts.shape}")

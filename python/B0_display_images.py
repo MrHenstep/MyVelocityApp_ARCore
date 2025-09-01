@@ -3,20 +3,25 @@ import os
 
 ##########################################################################################################
 
-# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
 
-FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_static_test"
+# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_static_test"
+# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_28_1"
+# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_28_4"
+FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
 
 ##################################################################################################################
 
-BATCH_NUMBER = 0
+
 CONFIDENCE_LEVEL = 0.75
-DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, 3.0)
+DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, 5.0)
 
 IMAGE_ORIENTATION_ROTATION = 270    # if the phone is horizontal
 # IMAGE_ORIENTATION_ROTATION = 0      # if the phone is vertical
 
-DEPTH_POINTS_INDICES = range(0, 100, 5)
+DEPTH_POINTS_INDICES = range(0, 20, 1)
+
 
 MATCH_TIMESTAMPS = False
 
@@ -27,22 +32,23 @@ WEIGHTS_SIGMOID = (X_CUT, X_WIDTH)
 
 ##################################################################################################################
 
-TIMESTAMPS_TABLE = exv.read_timestamp_files(FILE_PATH, BATCH_NUMBER)
+BATCH_LIST = [0, 1, 2, 3]
+BATCH_LIST = [3]
 
 
-if MATCH_TIMESTAMPS:
-    MATCHED_INDICES = exv.find_closest_timestamp_matches(TIMESTAMPS_TABLE, 3, 2, direction='both')
-else:
-    MATCHED_INDICES = exv.get_all_indices(FILE_PATH, BATCH_NUMBER)
+for batch_number in BATCH_LIST:
 
-# exv.print_closest_ts_match(TIMESTAMPS_TABLE, MATCHED_INDICES)
-MATCHED_FILENAME_TABLE = exv.get_matched_filenames(MATCHED_INDICES, FILE_PATH, BATCH_NUMBER)
+    print(f"Processing batch {batch_number}")
 
-exv.batch_display_points_and_images(FILE_PATH, MATCHED_FILENAME_TABLE, CONFIDENCE_LEVEL, TIMESTAMPS_TABLE, MATCHED_INDICES, DEPTH_POINTS_INDICES, DEPTH_RANGE_FOR_COLOUR_MAP, rotation_deg=IMAGE_ORIENTATION_ROTATION)
+    TIMESTAMPS_TABLE = exv.read_timestamp_files(FILE_PATH, batch_number)
 
-# for row in MATCHED_FILENAME_TABLE:
-#     # print(row)
 
-#     tracked_points = exv.read_float_data_as_nx4(FILE_PATH, row[5])
-#     print("Tracked points shape:", tracked_points.shape)
-#     print("Tracked points:", tracked_points)
+    if MATCH_TIMESTAMPS:
+        MATCHED_INDICES = exv.find_closest_timestamp_matches(TIMESTAMPS_TABLE, 3, 2, direction='both')
+    else:
+        MATCHED_INDICES = exv.get_all_indices(FILE_PATH, batch_number)
+
+    # exv.print_closest_ts_match(TIMESTAMPS_TABLE, MATCHED_INDICES)
+    MATCHED_FILENAME_TABLE = exv.get_matched_filenames(MATCHED_INDICES, FILE_PATH, batch_number)
+
+    exv.batch_display_points_and_images(FILE_PATH, MATCHED_FILENAME_TABLE, CONFIDENCE_LEVEL, TIMESTAMPS_TABLE, MATCHED_INDICES, DEPTH_POINTS_INDICES, DEPTH_RANGE_FOR_COLOUR_MAP, rotation_deg=IMAGE_ORIENTATION_ROTATION)

@@ -135,18 +135,18 @@ def get_matched_filenames(match_indices, directory, batch_number):
 ### extracting the data from the files 
 
 
-def read_float_data_as_nx4(file_path, file_name, confidence_level=None):
+def read_float_data_as_nxm(file_path, file_name, confidence_level=None, m=4):
 
     # Load raw binary float32 data, little-endian
     data = np.fromfile(file_path + "/" + file_name, dtype='<f4')  # '<f4' = little-endian float32
 
     # Reshape the data into a 2D array with 4 columns
     # x, y, depth, conf
-    data_reshaped = data.reshape(-1, 4)
+    data_reshaped = data.reshape(-1, m)
 
     # Filter out points with confidence below the specified level
     if confidence_level is not None:
-        data_reshaped = data_reshaped[data_reshaped[:, 3] >= confidence_level]
+        data_reshaped = data_reshaped[data_reshaped[:, m-1] >= confidence_level]
     return data_reshaped
 
 
@@ -262,17 +262,17 @@ def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range)
 
     # DEPTH POINTS
     if row[0] != "n/a":
-        points = read_float_data_as_nx4(file_path, row[0], confidence_level)
+        points = read_float_data_as_nxm(file_path, row[0], confidence_level)
         depth_points_bitmap = get_depth_map_bitmap(data=None, depth_points=points, depth_range=depth_range)
     else:
         depth_points_bitmap = get_depth_map_bitmap(data=None, depth_points=None)
 
     # CAMERA IMAGE
     if row[1] != "n/a":
-        points = read_float_data_as_nx4(file_path, row[0])
+        points = read_float_data_as_nxm(file_path, row[0])
         depth_map_camera = read_float_data_as_nx6(file_path, row[1])
         if row[5] != "n/a":
-            tracked_points = read_float_data_as_nx4(file_path, row[5])
+            tracked_points = read_float_data_as_nxm(file_path, row[5])
             depth_map_camera_bitmap = get_depth_map_bitmap(depth_map_camera, depth_points=points, tracked_points=tracked_points, depth_range=depth_range)
         else:
             depth_map_camera_bitmap = get_depth_map_bitmap(depth_map_camera, depth_points=points, depth_range=depth_range)
@@ -288,7 +288,7 @@ def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range)
 
     # CONFIDENCE POINTS
     if row[4] != "n/a":
-        confidence_points = read_float_data_as_nx4(file_path, row[4])
+        confidence_points = read_float_data_as_nxm(file_path, row[4])
         confidence_points_bitmap = get_depth_map_bitmap(data=None, depth_range=(0.0, 1.0), depth_points=confidence_points, colour_map='Greys')
         overlay_points = confidence_points
     else:
@@ -303,7 +303,7 @@ def get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, co
     Assumes depth_map_data rows are [x, y, a, r, g, b] and r=g=b (greyscale).
     """
     # Load [x, y, depth, conf]
-    depth_points = read_float_data_as_nx4(file_path, depth_points_file, confidence_level)
+    depth_points = read_float_data_as_nxm(file_path, depth_points_file, confidence_level)
     if depth_points.size == 0:
         return np.zeros((0, 5), dtype=np.float32)
 

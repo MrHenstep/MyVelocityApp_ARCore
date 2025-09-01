@@ -959,15 +959,6 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     float[] transformedConfidencePoints4d = null;
     if (confidencePoints4d != null) transformedConfidencePoints4d = frameData.mapDepthPointsToCameraImage(confidencePoints4d);
 
-    // -------------------------------------------------------------------------------------------------------------------
-    // get camera image and rotate
-
-//    int displayRotation = getWindowManager().getDefaultDisplay().getRotation();
-//    int rotationDegrees = getCameraImageRotationDegrees(this, displayRotation);
-
-//    String backCameraId = getBackCameraId(this);
-//    int rotationDegrees = displayRotationHelper.getCameraSensorToDisplayRotation(backCameraId);
-
     int rotationDegreesDepth = 270 - frameData.gravityRotationDeg;
 
     int displayRotation = getWindowManager().getDefaultDisplay().getRotation();
@@ -985,31 +976,16 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     final int midasWidth = 256;
     final int midasHeight = 256;
 
-    // coerce image bitmap into a square bitmap for Midas
-//    Bitmap depthModelInputBitmap = null;
-//    int croppedBitmapSize;
-//    if (CROP_NOT_COMPRESS) {
-//      depthModelInputBitmap = cropCenterSquare(rotatedCameraBitmap);
-//      croppedBitmapSize = depthModelInputBitmap.getWidth();
-//      depthModelInputBitmap = Bitmap.createScaledBitmap(depthModelInputBitmap, midasWidth, midasHeight, true);
-//    }
-//    else {
-//      depthModelInputBitmap = Bitmap.createScaledBitmap(rotatedCameraBitmap, midasWidth, midasHeight, true);
-//    }
-//
-//    // convert sqaure bitmap into buffer and run Midas
-//    ByteBuffer inputBuffer = bitmapToByteBuffer(depthModelInputBitmap);           // convert bitmap to input buffer and create empty output buffer to write to
-
     Bitmap squareCrop;
     int croppedBitmapSize;
-    if (CROP_NOT_COMPRESS) {
+//    if (CROP_NOT_COMPRESS) {
       squareCrop = cropCenterSquare(rotatedCameraBitmap);
       croppedBitmapSize = squareCrop.getWidth();
-    } else {
-      // make a centered square first to be consistent with PC path
-      squareCrop = cropCenterSquare(rotatedCameraBitmap);
-      croppedBitmapSize = squareCrop.getWidth();
-    }
+//    } else {
+//      // make a centered square first to be consistent with PC path
+//      squareCrop = cropCenterSquare(rotatedCameraBitmap);
+//      croppedBitmapSize = squareCrop.getWidth();
+//    }
 
 // Convert squareCrop -> float RGB in [0,1]
     int S = squareCrop.getWidth();
@@ -1040,7 +1016,7 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     Bitmap rotatedDepthMapResultColour = null;
     Bitmap rotatedDepthMapResultGrey = null;
 
-    if (CROP_NOT_COMPRESS) {
+//    if (CROP_NOT_COMPRESS) {
 
       float[][][][] depthResized = bilinearResizeAlignCornersFalse(outputBuffer, croppedBitmapSize, croppedBitmapSize);
 
@@ -1053,13 +1029,13 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 //      Bitmap greySquare = Bitmap.createScaledBitmap(rotatedDepthMapResult.greyscaleBitmap, croppedBitmapSize, croppedBitmapSize, true);
 //      rotatedDepthMapResultColour = pasteSquareIntoBlackFrame(colourSquare, imageWidth, imageHeight);
 //      rotatedDepthMapResultGrey = pasteSquareIntoBlackFrame(greySquare, imageWidth, imageHeight);
-    }
-    else{
-      DepthMapResult rotatedDepthMapResult = createColorMappedBitmap(outputBuffer, midasWidth, midasHeight); // create coloured bitmap from Midas output buffer, croppedBitmapSize); // create coloured bitmap from Midas output buffer
-      rotatedDepthMapResultColour = Bitmap.createScaledBitmap(rotatedDepthMapResult.colourBitmap, imageWidth, imageHeight, true);
-      rotatedDepthMapResultGrey = Bitmap.createScaledBitmap(rotatedDepthMapResult.greyscaleBitmap, imageWidth, imageHeight, true);
-
-    }
+//    }
+//    else{
+//      DepthMapResult rotatedDepthMapResult = createColorMappedBitmap(outputBuffer, midasWidth, midasHeight); // create coloured bitmap from Midas output buffer, croppedBitmapSize); // create coloured bitmap from Midas output buffer
+//      rotatedDepthMapResultColour = Bitmap.createScaledBitmap(rotatedDepthMapResult.colourBitmap, imageWidth, imageHeight, true);
+//      rotatedDepthMapResultGrey = Bitmap.createScaledBitmap(rotatedDepthMapResult.greyscaleBitmap, imageWidth, imageHeight, true);
+//
+//    }
 
     Bitmap depthModelBitmapColour = rotateBitmap(rotatedDepthMapResultColour, -rotationDegreesDepth);
     Bitmap depthModelBitmapGrey = rotateBitmap(rotatedDepthMapResultGrey, -rotationDegreesDepth);
@@ -1467,7 +1443,6 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     float[][][][] dst = new float[1][newH][newW][1];
 
     for (int y = 0; y < newH; y++) {
-      // PyTorch grid: align_corners=False
       float gy = ((y + 0.5f) * srcH / (float) newH) - 0.5f;
       int y0 = (int) Math.floor(gy);
       int y1 = y0 + 1;
