@@ -127,8 +127,12 @@ def plot_trajectory_measures(trajectories, batch_mask, item, plot_label, title, 
     plt.figure(figsize=(base_width * shrink, base_height * shrink))
     color = '#4B6A88'  # Use the same blue-grey for all lines
     linestyles = ['-', '--', '-.', ':']
+    # Use 4 hollow markers: 'o', 's', '^', 'D' (circle, square, triangle_up, diamond)
+    markers = ['o', 's', '^', 'D']
     skip_first = item in {"abs_v", "dX", "dY", "dZ"}
     for i, (model_name, traj_df) in enumerate(trajectories.items()):
+        marker = markers[i % len(markers)]
+        # Use hollow markers by setting markerfacecolor='none'
         if skip_first:
             # Compute t_mid as the average of t and previous t
             t_vals = traj_df["t"].values
@@ -139,7 +143,9 @@ def plot_trajectory_measures(trajectories, batch_mask, item, plot_label, title, 
                 y_vals,
                 label=model_name,
                 color=color,
-                linestyle=linestyles[i % len(linestyles)]
+                linestyle=linestyles[i % len(linestyles)],
+                marker=marker,
+                markerfacecolor='none'
             )
         else:
             plt.plot(
@@ -147,7 +153,9 @@ def plot_trajectory_measures(trajectories, batch_mask, item, plot_label, title, 
                 traj_df[item],
                 label=model_name,
                 color=color,
-                linestyle=linestyles[i % len(linestyles)]
+                linestyle=linestyles[i % len(linestyles)],
+                marker=marker,
+                markerfacecolor='none'
             )
 
     # Plot measured_df if provided
@@ -189,11 +197,11 @@ def plot_trajectory_measures(trajectories, batch_mask, item, plot_label, title, 
 if __name__ == "__main__":
 
 
-    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+    FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
 
 
     # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_30_2"
-    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
 
     FILE_NAME_LIST = [
         "batch_0_trajectories_3D_Phone_midas_v21_small_Phone_openCV_LK.csv"
@@ -203,7 +211,7 @@ if __name__ == "__main__":
     ]
 
     BATCH_NUMBER_LIST = [0, 1, 2, 3]
-    # BATCH_NUMBER_LIST = [3]
+    BATCH_NUMBER_LIST = [1]
 
     old_batch_mask = "batch_0"
 

@@ -406,13 +406,13 @@ public class FrameData {
             for (int iy = 0; iy < depthHeight; iy += step) {
                 for (int ix = 0; ix < depthWidth; ix += step) {
 
-                    int depthMillimeters = depthBuffer.get(iy * depthWidth + ix); // Depth image pixels are in mm.
+                    int radialDepthMillimetres = depthBuffer.get(iy * depthWidth + ix); // Depth image pixels are in mm.
 
-                    if (depthMillimeters == 0) {
+                    if (radialDepthMillimetres == 0) {
                         continue;
                     }
 
-                    float depthMeters = depthMillimeters / 1000.0f;
+                    float radialDepthMetres = radialDepthMillimetres / 1000.0f;
 
                     // Retrieve the confidence value for this pixel.
                     final byte confidencePixelValue =
@@ -427,7 +427,7 @@ public class FrameData {
 
                     points[numPointsUsed * 4] = ix;
                     points[numPointsUsed * 4 + 1] = iy;
-                    points[numPointsUsed * 4 + 2] = depthMeters;
+                    points[numPointsUsed * 4 + 2] = radialDepthMetres;
                     points[numPointsUsed * 4 + 3] = confidenceNormalized;
 
                     numPointsUsed++;

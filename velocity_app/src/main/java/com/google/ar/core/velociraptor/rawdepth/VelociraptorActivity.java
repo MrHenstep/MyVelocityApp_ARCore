@@ -111,6 +111,44 @@ import org.opencv.android.Utils;
 import org.opencv.imgproc.Imgproc;
 
 
+/**
+ * Main activity for the Velociraptor application.
+ *
+ * <p>This activity handles:
+ * <ul>
+ *   <li>ARCore session setup and lifecycle management.
+ *   <li>Camera preview rendering using OpenGL.
+ *   <li>Displaying a live preview of the camera feed with overlaid depth information and a tracked point.
+ *   <li>Collecting batches of frames upon user interaction (pressing the "Continue" button).
+ *   <li>Processing collected frames to:
+ *     <ul>
+ *       <li>Extract ARCore depth data (raw depth points and confidence).
+ *       <li>Run a TFLite depth estimation model (Midas) on the camera image.
+ *       <li>Track a user-selected point across frames using optical flow.
+ *       <li>Save all relevant data (timestamps, depth points, camera images, model output, intrinsics, extrinsics, tracked point coordinates) to binary files for offline analysis.
+ *     </ul>
+ *   <li>Handling user touch input to select the point to be tracked.
+ *   <li>Managing device orientation changes and sensor data (accelerometer for gravity).
+ * </ul>
+ *
+ * <p>The application uses a GLSurfaceView for rendering the camera background and any ARCore augmentations.
+ * An ImageView is used to display a processed preview bitmap which includes the camera feed,
+ * visualized depth points, and the tracked point.
+ *
+ * <p>Frame collection is throttled and occurs in batches. Once a batch is collected, it is
+ * processed on a separate background thread to avoid blocking the UI or GL rendering threads.
+ *
+ * <p>Key components:
+ * <ul>
+ *   <li>{@link Session}: Manages the ARCore session.
+ *   <li>{@link GLSurfaceView.Renderer}: Interface implemented for custom OpenGL rendering.
+ *   <li>{@link Interpreter}: Used to run the Midas depth estimation model.
+ *   <li>OpenCV: Used for image processing tasks like optical flow and grayscale conversion.
+ *   <li>{@link SnackbarHelper}: Utility for displaying messages to the user.
+ *   <li>{@link DisplayRotationHelper}: Utility for handling display rotation.
+ *   <li>{@link CameraPermissionHelper}: Utility for managing camera permissions.
+ * </ul>
+ */
 public class VelociraptorActivity extends AppCompatActivity implements GLSurfaceView.Renderer {
 
 // <editor-fold desc="Member Variables">
@@ -125,7 +163,6 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
   // *** Probably we could extract this but as it works, we just turn off the drawing for now
   private final TextureRenderer backgroundRenderer = new TextureRenderer();
 
-
   // ARCore session
   private Session session;
   private boolean installRequested; // came from Codelab example
@@ -138,7 +175,6 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 
   // The Midas-2.0 nana model for relative depth
   private Interpreter tflite_interpreter;
-//  private static final String MODEL_PATH = "midas_nano.tflite"; // Replace with your model filename
   private static final String MODEL_PATH = "Midas-V2.tflite";
 
   //  private long lastProcessedTimestampNanos = 0;
@@ -153,8 +189,6 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
   private static final boolean CROP_NOT_COMPRESS = true;
 
   private Button continueButton;
-//  private final Object continueLock = new Object();
-//  private boolean continuePressed = false;
 
   private long baseTimestamp;
 
@@ -163,7 +197,6 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
   private Mat prevGrey = null;
 
   // For point-tracking
-//  private org.opencv.core.Mat previousFrameGreyScale = null;
   private final AtomicReference<PointF> trackingPointRef =
         new AtomicReference<>(new PointF(0.0f, 0.0f));
 
@@ -592,23 +625,9 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 
             final int thisBatch = batchCounter - 1;
 
-            // notify the user that we're processing
-//            runOnUiThread(() -> {
-//              continueButton.setText("Processing: Batch " + thisBatch);
-//              continueButton.setEnabled(false);
-//              continueButton.setVisibility(View.VISIBLE);
-//              continueButton.bringToFront();
-//              continueButton.setElevation(getResources().getDisplayMetrics().density * 16f); // ~16dp
-//            });
-
             collectingFrames = false;
             processingFrames.set(true);
 
-            // copy the collected frames into a list and clear the list
-            // this is so that the processing, which is about to execute on a different thread,
-            // can work on it while the GL thread carries on displaying previews
-            // (just in case onDrawFrame is ever changed to collect while processing)
-//            List<FrameData> snapshot = new ArrayList<>(collectedFramesContainer);
             List<CollectedSample> snapshot = new ArrayList<>(collectedFramesContainer);
             collectedFramesContainer.clear();
             numFramesCollected = 0;
@@ -948,8 +967,8 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 
   try  {
 
-    // -------------------------------------------------------------------------------------------------------------------
-    // get the depth and confidence points
+    // STEP 1 - get the DEPTH and CONFIDENCE points from the frame data
+    // and format into float arrays nx4,
 
     float[] points4d = frameData.getDepthPoints(0.5f);
     float[] transformedPoints4d = null;
@@ -958,6 +977,8 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     float[] confidencePoints4d = frameData.getConfidencePoints();
     float[] transformedConfidencePoints4d = null;
     if (confidencePoints4d != null) transformedConfidencePoints4d = frameData.mapDepthPointsToCameraImage(confidencePoints4d);
+
+    // STEP 2 - get CAMERA image bitmap from the frame data
 
     int rotationDegreesDepth = 270 - frameData.gravityRotationDeg;
 
@@ -968,26 +989,16 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 
     Bitmap cameraBitmap = frameData.getCameraBitmap();
 
-    // -------------------------------------------------------------------------------------------------------------------
-    // run depth estimation on the camera image
-
+    // STEP 3 - run the depth model on the camera image bitmap
+    // and repackage the results as a colour-mapped bitmap and a grey-scale bitmap
     Bitmap rotatedCameraBitmap = rotateBitmap(cameraBitmap, rotationDegreesDepth);
-
-    final int midasWidth = 256;
-    final int midasHeight = 256;
 
     Bitmap squareCrop;
     int croppedBitmapSize;
-//    if (CROP_NOT_COMPRESS) {
-      squareCrop = cropCenterSquare(rotatedCameraBitmap);
-      croppedBitmapSize = squareCrop.getWidth();
-//    } else {
-//      // make a centered square first to be consistent with PC path
-//      squareCrop = cropCenterSquare(rotatedCameraBitmap);
-//      croppedBitmapSize = squareCrop.getWidth();
-//    }
+    squareCrop = cropCenterSquare(rotatedCameraBitmap);
+    croppedBitmapSize = squareCrop.getWidth();
 
-// Convert squareCrop -> float RGB in [0,1]
+    // Convert squareCrop -> float RGB in [0,1]
     int S = squareCrop.getWidth();
     float[][][] rgbSquare = new float[S][S][3];
     for (int y = 0; y < S; y++) {
@@ -999,51 +1010,30 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
       }
     }
 
-// Resize with align_corners = false to 256×256 (PyTorch-equivalent grid)
+    // Resize with align_corners = false to 256×256 (PyTorch-equivalent grid)
     float[][][] rgb256 = resizeRgbAlignCornersFalse(rgbSquare, 256, 256);
 
-// Pack with ImageNet mean/std
+    // Pack with ImageNet mean/std
     ByteBuffer inputBuffer = rgbFloatToInputBuffer(rgb256);
-
     float[][][][] outputBuffer = new float[1][256][256][1];
-    tflite_interpreter.run(inputBuffer, outputBuffer);  // run MIDAS
+
+    tflite_interpreter.run(inputBuffer, outputBuffer);
 
     // convert output buffer into bitmaps (colour, grey)
-
     final int imageWidth = rotatedCameraBitmap.getWidth();
     final int imageHeight = rotatedCameraBitmap.getHeight();
 
     Bitmap rotatedDepthMapResultColour = null;
     Bitmap rotatedDepthMapResultGrey = null;
 
-//    if (CROP_NOT_COMPRESS) {
-
-      float[][][][] depthResized = bilinearResizeAlignCornersFalse(outputBuffer, croppedBitmapSize, croppedBitmapSize);
-
-      DepthMapResult rotatedDepthMapResult = createColorMappedBitmap(depthResized, croppedBitmapSize, croppedBitmapSize);
-
-      rotatedDepthMapResultColour = pasteSquareIntoBlackFrame(rotatedDepthMapResult.colourBitmap, imageWidth, imageHeight);
-      rotatedDepthMapResultGrey   = pasteSquareIntoBlackFrame(rotatedDepthMapResult.greyscaleBitmap, imageWidth, imageHeight);
-
-//      Bitmap colourSquare = Bitmap.createScaledBitmap(rotatedDepthMapResult.colourBitmap, croppedBitmapSize, croppedBitmapSize, true);
-//      Bitmap greySquare = Bitmap.createScaledBitmap(rotatedDepthMapResult.greyscaleBitmap, croppedBitmapSize, croppedBitmapSize, true);
-//      rotatedDepthMapResultColour = pasteSquareIntoBlackFrame(colourSquare, imageWidth, imageHeight);
-//      rotatedDepthMapResultGrey = pasteSquareIntoBlackFrame(greySquare, imageWidth, imageHeight);
-//    }
-//    else{
-//      DepthMapResult rotatedDepthMapResult = createColorMappedBitmap(outputBuffer, midasWidth, midasHeight); // create coloured bitmap from Midas output buffer, croppedBitmapSize); // create coloured bitmap from Midas output buffer
-//      rotatedDepthMapResultColour = Bitmap.createScaledBitmap(rotatedDepthMapResult.colourBitmap, imageWidth, imageHeight, true);
-//      rotatedDepthMapResultGrey = Bitmap.createScaledBitmap(rotatedDepthMapResult.greyscaleBitmap, imageWidth, imageHeight, true);
-//
-//    }
-
+    float[][][][] depthResized = bilinearResizeAlignCornersFalse(outputBuffer, croppedBitmapSize, croppedBitmapSize);
+    DepthMapResult rotatedDepthMapResult = createColorMappedBitmap(depthResized, croppedBitmapSize, croppedBitmapSize);
+    rotatedDepthMapResultColour = pasteSquareIntoBlackFrame(rotatedDepthMapResult.colourBitmap, imageWidth, imageHeight);
+    rotatedDepthMapResultGrey   = pasteSquareIntoBlackFrame(rotatedDepthMapResult.greyscaleBitmap, imageWidth, imageHeight);
     Bitmap depthModelBitmapColour = rotateBitmap(rotatedDepthMapResultColour, -rotationDegreesDepth);
     Bitmap depthModelBitmapGrey = rotateBitmap(rotatedDepthMapResultGrey, -rotationDegreesDepth);
 
-
-
-    // -----------------------------------------------------------------------------------------------------
-    // run point tracker
+    // STEP 4 - run the POINT TRACKER on the camera image
     Mat newGrey = toGreyScaleMat(cameraBitmap);
     PointF newPoint = null;
     if (prevState != null && prevState.prevGrey != null) {
@@ -1058,8 +1048,7 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     }
     newGrey.release();
 
-    // -----------------------------------------------------------------------------------------------------
-    // now save all to file
+    // STEP 5 - save all this, plus extrinsics, intrinstics and time-stamps to file
 
     // TIMESTAMPS
     float[] timeStamps = new float[] {

@@ -9,7 +9,7 @@ FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Veloc
 # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_28_1"
 # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
 # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_28_4"
-FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
+# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
 
 ##################################################################################################################
 
@@ -20,7 +20,7 @@ DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, 5.0)
 IMAGE_ORIENTATION_ROTATION = 270    # if the phone is horizontal
 # IMAGE_ORIENTATION_ROTATION = 0      # if the phone is vertical
 
-DEPTH_POINTS_INDICES = range(0, 20, 1)
+DEPTH_POINTS_INDICES = range(0, 20, 20)
 
 
 MATCH_TIMESTAMPS = False
@@ -33,7 +33,7 @@ WEIGHTS_SIGMOID = (X_CUT, X_WIDTH)
 ##################################################################################################################
 
 BATCH_LIST = [0, 1, 2, 3]
-BATCH_LIST = [3]
+BATCH_LIST = [1]
 
 
 for batch_number in BATCH_LIST:

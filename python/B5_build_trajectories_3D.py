@@ -38,10 +38,21 @@ def get_projected_3d_coords(image_dimensions, principal_point, focal_length, wid
     fy = focal_length[1] * image_dimensions[1] / height
     cx = principal_point[0] * image_dimensions[0] / width
     cy = principal_point[1] * image_dimensions[1] / height
+
+    # approximating the z coordinate with the radial depth
+    # x_cam = (x - cx) / fx * metric_depth
+    # y_cam = -(y - cy) / fy * metric_depth
+    # z_cam = -metric_depth
     
-    x_cam = (x - cx) / fx * metric_depth
-    y_cam = -(y - cy) / fy * metric_depth
-    z_cam = -metric_depth
+    # doing it properly
+    u = (x - cx) / fx
+    v = (y - cy) / fy
+
+    norm = np.sqrt(u**2 + v**2 + 1)
+
+    x_cam = u * metric_depth / norm
+    y_cam = -v * metric_depth / norm
+    z_cam = -metric_depth / norm
 
     cam_homogeneous_points = np.array([x_cam, y_cam, z_cam, np.ones_like(x_cam)]).T
 
@@ -152,11 +163,8 @@ if __name__ == "__main__":
 
     ##########################################################################################################
 
-    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
-
-    
-    
-    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
+    FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
 
     CONFIDENCE_LEVEL = 0.75
     DEPTH_MAX = 25.0
@@ -174,7 +182,7 @@ if __name__ == "__main__":
     INVERT_AXES = False
     DISPLAY_PLOTS = False
 
-    BATCH_NUMBER_LIST = [0,1,2,3]
+    BATCH_NUMBER_LIST = [1]
 
 
     for batch_number in BATCH_NUMBER_LIST:
