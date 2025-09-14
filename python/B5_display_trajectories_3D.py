@@ -11,6 +11,20 @@ import persistence_helpers as phelp
 ###########################################################################################################
 
 def get_depth_from_regression(file_path, depth_map_file_name_replacement,  row, regression_results, x, y, width):
+    def get_depth_from_regression(file_path, depth_map_file_name_replacement, row, regression_results, x, y, width):
+        """
+        Computes the metric depth at a specific (x, y) coordinate using regression results and a depth map.
+        Args:
+            file_path (str): Path to the directory containing the depth map file.
+            depth_map_file_name_replacement (str): String to replace "grey" in the depth map file name, if provided.
+            row (list or pd.Series): Row containing metadata, including the depth map file name at index 3 and depth points file at index 0.
+            regression_results (pd.DataFrame): DataFrame containing regression coefficients ('coef') and intercepts ('intercept') for each depth points file.
+            x (int): X-coordinate in the depth map.
+            y (int): Y-coordinate in the depth map.
+            width (int): Width of the depth map (used to compute the linear index).
+        Returns:
+            float: The computed metric depth at the specified (x, y) location.
+        """
 
     # Get rel depth from depth map
     depth_map_file = row[3]
@@ -33,6 +47,20 @@ def get_depth_from_regression(file_path, depth_map_file_name_replacement,  row, 
     return metric_depth
 
 def get_projected_3d_coords(image_dimensions, principal_point, focal_length, width, height, x, y, metric_depth):
+    """
+    Projects 2D image coordinates into 3D camera coordinates using intrinsic camera parameters.
+    Args:
+        image_dimensions (tuple): The dimensions of the image (width, height).
+        principal_point (tuple): The principal point of the camera (cx, cy) in pixel coordinates.
+        focal_length (tuple): The focal length of the camera (fx, fy) in pixels.
+        width (int or float): The reference width for scaling.
+        height (int or float): The reference height for scaling.
+        x (array-like): The x coordinates in the image.
+        y (array-like): The y coordinates in the image.
+        metric_depth (array-like or float): The depth value(s) in metric units.
+    Returns:
+        np.ndarray: The projected 3D camera coordinates in homogeneous form, shape (..., 4).
+    """
 
     fx = focal_length[0] * image_dimensions[0] / width
     fy = focal_length[1] * image_dimensions[1] / height
@@ -57,6 +85,29 @@ def get_batch_3d_and_extrinsics(
         frame_inclusion_list, 
         regression_results
     ):
+    """
+    Processes a batch of frames to extract 3D tracked points and camera extrinsic matrices.
+    For each frame specified in `frame_inclusion_list`, this function:
+    - Loads tracked 2D points from the tracking model file.
+    - Computes metric depth for each point using regression results.
+    - Reads camera intrinsics and extrinsics.
+    - Projects 2D points to 3D camera coordinates.
+    - Transforms 3D points to the ARCore reference frame using extrinsics.
+    Args:
+        file_path (str): Base directory containing data files.
+        matched_filename_table (list): Table of matched filenames and metadata for each frame.
+        depth_map_file_name_replacement (str): String to replace in depth map filenames.
+        tracking_file_name_replacement (str): String to replace in tracking model filenames.
+        width (int): Image width.
+        height (int): Image height.
+        frame_inclusion_list (list): Indices of frames to include in processing.
+        regression_results (dict): Regression results for depth estimation.
+    Returns:
+        tuple:
+            extrinsic_matrices (list): List of extrinsic matrices for each processed frame.
+            tracked_points_cam (list): List of 3D tracked points in camera coordinates for each frame.
+            tracked_points_ref (list): List of 3D tracked points in ARCore reference frame for each frame.
+    """
 
 
     extrinsic_matrices = []
@@ -101,6 +152,20 @@ def get_batch_3d_and_extrinsics(
     return extrinsic_matrices, tracked_points_cam, tracked_points_ref
 
 def print_transformation_data(depth_model_name, tracking_model_name, extrinsic_matrices, tracked_points_cam, tracked_points_ref):
+    """
+    Prints transformation and tracking data for a given depth and tracking model.
+    Args:
+        depth_model_name (str): Name of the depth model used.
+        tracking_model_name (str): Name of the tracking model used.
+        extrinsic_matrices (list of list of list of float): List of extrinsic matrices, each represented as a 2D list.
+        tracked_points_cam (list of list of list of float): List of tracked points in the camera frame for each frame.
+        tracked_points_ref (list of list of list of float): List of tracked points in the reference frame for each frame.
+    Prints:
+        - The names of the depth and tracking models.
+        - The extrinsic matrices, row by row.
+        - The tracked points in the camera frame, grouped by frame.
+        - The tracked points in the reference frame, grouped by frame.
+    """
 
     print(f"\n{depth_model_name}, {tracking_model_name}\n")
 
@@ -122,6 +187,20 @@ def print_transformation_data(depth_model_name, tracking_model_name, extrinsic_m
             print(f"Frame {index},", ",".join(map(str, point)))
 
 def write_transformation_data_to_file(filename, depth_model_name, tracking_model_name, extrinsic_matrices, tracked_points_cam, tracked_points_ref):
+    """
+    Writes transformation and tracking data to a specified file.
+    Parameters:
+        filename (str): Path to the output file where data will be written.
+        depth_model_name (str): Name of the depth model used.
+        tracking_model_name (str): Name of the tracking model used.
+        extrinsic_matrices (list of list of list of float): List of extrinsic transformation matrices.
+        tracked_points_cam (list of list of list of float): Tracked points in the camera frame, organized by frame.
+        tracked_points_ref (list of list of list of float): Tracked points in the reference frame, organized by frame.
+    The output file will contain:
+        - The names of the depth and tracking models.
+        - The extrinsic matrices.
+        - The tracked points in both camera and reference frames, grouped by frame.
+    """
 
     with open(filename, 'w') as f:
         f.write(f"\n{depth_model_name}, {tracking_model_name}\n\n")
@@ -144,10 +223,26 @@ def write_transformation_data_to_file(filename, depth_model_name, tracking_model
 
 def read_transformation_data_from_file(filename):
     """
-    Reads a file produced by write_transformation_data_to_file and reconstructs:
-      depth_model_name, tracking_model_name, extrinsic_matrices,
-      tracked_points_cam, tracked_points_ref
+    Reads transformation and tracking data from a formatted text file.
+    The file is expected to contain:
+        - A header line: "depth_model_name, tracking_model_name"
+        - Sections:
+            - "Extrinsic Matrices:" followed by one or more matrices (rows of comma-separated floats, matrices separated by blank lines)
+            - "Tracked points in camera frame:" with lines of the format "Frame {index},<v1>,<v2>,<v3>,<v4?>"
+            - "Tracked points in reference frame:" with lines of the format "Frame {index},<v1>,<v2>,<v3>,<v4?>"
+    Args:
+        filename (str): Path to the input file.
+    Returns:
+        tuple:
+            depth_model_name (str): Name of the depth model from the header.
+            tracking_model_name (str): Name of the tracking model from the header.
+            extrinsic_matrices (list): List of extrinsic matrices (each a list of rows).
+            tracked_points_cam (list): List of lists of tracked points in camera frame, indexed by frame.
+            tracked_points_ref (list): List of lists of tracked points in reference frame, indexed by frame.
+    Raises:
+        ValueError: If the file is empty, missing required sections, or contains malformed lines.
     """
+
     with open(filename, "r") as f:
         # strip newlines; keep empty lines to detect matrix breaks
         lines = [line.strip() for line in f.readlines()]
@@ -243,9 +338,17 @@ def read_transformation_data_from_file(filename):
 if __name__ == "__main__":
 
     ##########################################################################################################
+    
+    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
 
-    FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
-    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_30_1"
+    # DATA - A
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+    # # DATA - B
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_30_2"
+    # DATA - C
+    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
+
+    ###########################################################################################################
 
     CONFIDENCE_LEVEL = 0.75
     DEPTH_MAX = 25.0
@@ -260,8 +363,8 @@ if __name__ == "__main__":
     X_WIDTH = 1.0
     WEIGHTS_SIGMOID = (X_CUT, X_WIDTH)
 
-    INVERT_AXES = False
-    DISPLAY_PLOTS = False
+    # INVERT_AXES = False
+    # DISPLAY_PLOTS = False
 
     BATCH_NUMBER_LIST = [0,1,2,3]
     # BATCH_NUMBER_LIST = [0, 1]

@@ -11,6 +11,26 @@ def display_frames_between(
     show_pts_ms=True,          # also show the file's reported PTS (POS_MSEC)
     skip_frames = 10
 ):
+    """
+    Displays selected frames from a video file between specified start and end times.
+    Parameters:
+        video_path (str): Path to the video file.
+        start_time_s (float, optional): Start time in seconds. Defaults to 0.0.
+        end_time_s (float or None, optional): End time in seconds. If None, displays until the end of the video. Defaults to None.
+        assumed_fps (float or None, optional): Frames per second to use for time-to-frame mapping. If None, uses the video's FPS. Defaults to None.
+        figsize (tuple, optional): Size of the matplotlib figure for displaying frames. Defaults to (12, 8).
+        show_pts_ms (bool, optional): Whether to display the file-reported presentation timestamp (PTS) in milliseconds. Defaults to True.
+        skip_frames (int, optional): Number of frames to skip between displays (i.e., display every Nth frame). Defaults to 10.
+    Raises:
+        IOError: If the video file cannot be opened.
+        ValueError: If FPS is unknown or if end_time_s is less than start_time_s.
+    Notes:
+        - Frames are displayed using matplotlib.
+        - The function attempts to use the video's FPS unless an assumed FPS is provided.
+        - If the video's FPS or frame count cannot be determined, the function may raise an error or use fallback values.
+        - The displayed frame title includes both the assumed timestamp and, optionally, the file-reported PTS.
+    """
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise IOError(f"Cannot open video file: {video_path}")
@@ -79,7 +99,19 @@ def display_frames_between(
 # If you want to use the file's FPS instead, set assumed_fps=None.
 # display_frames_between("your_video.mov", start_time_s=2.5, end_time_s=7.0, assumed_fps=30, figsize=(14, 9))
 
-FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
+##########################################################################################################
+
+# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+
+# DATA - A
+FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+# DATA - B
+# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_30_2"
+# DATA - C
+# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
+
+###########################################################################################################
+
 FILE_NAME = "batch_3_witness_camera.MOV"
 
 start_time = 0.0

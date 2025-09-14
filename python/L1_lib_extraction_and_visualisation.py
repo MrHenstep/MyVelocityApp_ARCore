@@ -8,6 +8,19 @@ import matplotlib.pyplot as plt
 ### extracting the time stamps and then matching depth images with camera images
 
 def read_timestamp_files(directory, batch_number):
+    """
+    Reads binary timestamp files from a specified directory for a given batch number, extracts data, and returns it as a NumPy array.
+    The function searches for files matching the pattern 'batch_{batch_number}_timestamps_{nn}.bin', where {nn} is an integer.
+    Each file is expected to contain exactly 4 floats (16 bytes) in binary format.
+    Parameters:
+        directory (str): Path to the directory containing the timestamp files.
+        batch_number (int): The batch number used to filter relevant files.
+    Returns:
+        np.ndarray: A NumPy array of shape (M, 5), where M is the number of files found.
+                    The first column contains the file index (nn), and the next four columns contain the float values read from each file (scaled down by 1e9).
+    Raises:
+        ValueError: If any file does not contain exactly 4 floats (16 bytes).
+    """
     # Pattern to match filenames like timestamps_1.bin, timestamps_23.bin, etc.
     pattern = re.compile(rf"batch_{batch_number}_timestamps_(\d+)\.bin")
     data = []
@@ -76,6 +89,19 @@ def print_closest_ts_match(timestamps_array, match_indices):
 
 
 def get_all_indices(directory, batch_number):
+    """
+    Retrieves and returns all index values from filenames in a specified directory that match a given batch number pattern.
+
+    The function searches for files named in the format 'batch_{batch_number}_depth_points_{index}.bin',
+    extracts the index values, sorts them, and returns a NumPy array where each row contains the index value twice.
+
+    Args:
+        directory (str): Path to the directory containing the files.
+        batch_number (int or str): The batch number to match in the filenames.
+
+    Returns:
+        numpy.ndarray: A 2D array of shape (N, 2), where N is the number of matching files, and each row contains [index, index].
+    """
     pattern = re.compile(rf"batch_{batch_number}_depth_points_(\d+)\.bin")
     indices = []
     for filename in os.listdir(directory):
@@ -88,6 +114,27 @@ def get_all_indices(directory, batch_number):
     return match_indices
 
 def get_matched_filenames(match_indices, directory, batch_number):
+    """
+    Generates a table of filenames for matched indices, checking their existence in the specified directory.
+    For each pair of indices in `match_indices`, constructs filenames for various data types related to a batch,
+    checks if each file exists in the given `directory`, and returns either the filename or "n/a" if not found.
+    Args:
+        match_indices (list of tuple): List of index pairs (nn, mm) to match files.
+        directory (str): Path to the directory containing the files.
+        batch_number (int): Batch number used in the filenames.
+    Returns:
+        list of list: A table where each row corresponds to a pair of indices and contains the filenames (or "n/a")
+                      for the following files:
+                        - depth_points
+                        - depth_map_camera
+                        - depth_map_colour
+                        - depth_map_grey
+                        - confidence_points
+                        - tracked_point
+                        - extrinsic_matrix
+                        - texture_intrinsics
+                        - camera_intrinsics
+    """
 
 
     filename_table = []
@@ -136,6 +183,20 @@ def get_matched_filenames(match_indices, directory, batch_number):
 
 
 def read_float_data_as_nxm(file_path, file_name, confidence_level=None, m=4):
+    """
+    Reads binary float32 data from a file and reshapes it into an N x M NumPy array.
+    The function loads raw binary data (little-endian float32) from the specified file,
+    reshapes it into a 2D array with `m` columns, and optionally filters out rows
+    where the confidence value (assumed to be in the last column) is below the given threshold.
+    Parameters:
+        file_path (str): Path to the directory containing the file.
+        file_name (str): Name of the binary file to read.
+        confidence_level (float, optional): Minimum confidence value required to keep a row.
+            If None, no filtering is applied. Default is None.
+        m (int, optional): Number of columns to reshape the data into. Default is 4.
+    Returns:
+        np.ndarray: A 2D NumPy array of shape (N, m) containing the filtered data.
+    """
 
     # Load raw binary float32 data, little-endian
     data = np.fromfile(file_path + "/" + file_name, dtype='<f4')  # '<f4' = little-endian float32
@@ -151,6 +212,17 @@ def read_float_data_as_nxm(file_path, file_name, confidence_level=None, m=4):
 
 
 def read_float_data_as_nx6(file_path, file_name):
+    """
+    Reads a binary file containing float32 data and reshapes it into a 2D NumPy array with 6 columns.
+    Parameters:
+        file_path (str): The directory path to the binary file.
+        file_name (str): The name of the binary file to read.
+    Returns:
+        numpy.ndarray: A 2D array of shape (n, 6), where n is determined by the total number of float32 values divided by 6.
+    Notes:
+        - The binary file is expected to contain little-endian float32 values.
+        - The total number of float32 values in the file must be a multiple of 6.
+    """
     # Load raw binary float32 data, little-endian
     data = np.fromfile(file_path + "/" + file_name, dtype='<f4')  # '<f4' = little-endian float32
 
@@ -160,6 +232,30 @@ def read_float_data_as_nx6(file_path, file_name):
     return data_reshaped
 
 def get_depth_map_bitmap(data, depth_points=None, tracked_points=None, depth_range=(0.0, 5.0), colour_map='inferno', rotation=90):
+    """
+    Generates a bitmap image representing a depth map with optional overlays for depth points and tracked points.
+    Parameters
+    ----------
+    data : array-like or None
+        An array of pixel data, where each row should contain (x, y, a, r, g, b).
+        If None, a uniform background is used.
+    depth_points : np.ndarray or None, optional
+        Array of depth points to overlay, with shape (N, 3) where columns are (x, y, depth).
+        Points are colored according to their normalized depth using the specified colour_map.
+    tracked_points : np.ndarray or None, optional
+        Array of tracked points to overlay, with shape (M, 2) where columns are (x, y).
+        Points are highlighted as blue circles.
+    depth_range : tuple of float, optional
+        The minimum and maximum depth values for normalization (default is (0.0, 5.0)).
+    colour_map : str, optional
+        The name of the matplotlib colormap to use for depth points (default is 'inferno').
+    rotation : int, optional
+        The rotation angle (in degrees) to apply to the final image (default is 90).
+    Returns
+    -------
+    depth_map_bitmap : np.ndarray
+        The resulting RGB bitmap image as a NumPy array of shape (height, width, 3) and dtype uint8.
+    """
 
     num_cols = 640
     num_rows = 480
@@ -234,10 +330,16 @@ def get_depth_map_bitmap(data, depth_points=None, tracked_points=None, depth_ran
 
 def rotate_rgb_img(rgb_img, rotation_deg):
     """
-    Rotate an RGB image array (H, W, 3) by multiples of 90 degrees.
-    rotation_deg can be 0, 90, -90, 180, or 270.
-    Returns a new rotated array.
+    Rotates an RGB image by a specified degree.
+    Parameters:
+        rgb_img (np.ndarray): The input RGB image as a NumPy array.
+        rotation_deg (int): The rotation angle in degrees. Must be one of {0, 90, -90, 180, 270}.
+    Returns:
+        np.ndarray: The rotated RGB image.
+    Raises:
+        ValueError: If rotation_deg is not one of {0, 90, -90, 180, 270}.
     """
+ 
     r = rotation_deg % 360
     if r == 0:
         return rgb_img
@@ -251,6 +353,24 @@ def rotate_rgb_img(rgb_img, rotation_deg):
         raise ValueError("rotation_deg must be one of {0, 90, -90, 180, 270}")
 
 def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range):
+    """
+    Extracts and generates bitmap images representing various depth and confidence maps from data files.
+    Parameters:
+        file_path (str): Path to the data file containing depth and image information.
+        row (list): List of strings representing file keys or identifiers for different data types.
+        confidence_level (float): Confidence threshold for filtering depth points.
+        depth_range (tuple): Minimum and maximum depth values for visualization.
+    Returns:
+        tuple:
+            depth_points_bitmap: Bitmap image of depth points.
+            depth_map_camera_bitmap: Bitmap image of the camera depth map.
+            depth_map_colour_bitmap: Bitmap image of the colored depth map.
+            confidence_points_bitmap: Bitmap image of confidence points.
+    Notes:
+        - If a particular data type is not available (indicated by "n/a" in the row), a default or empty bitmap is returned for that type.
+        - The function internally reads and processes data using helper functions such as `read_float_data_as_nxm`, `read_float_data_as_nx6`, and `get_depth_map_bitmap`.
+        - The returned bitmaps can be used for visualization or further analysis.
+    """
 
     depth_points_bitmap = None
     depth_map_camera_bitmap = None
@@ -299,9 +419,24 @@ def get_points_and_images_bitmaps(file_path, row, confidence_level, depth_range)
 def get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, confidence_level,
                                 width=640, height=480, width_crop_size=0, height_crop_size=0):
     """
-    Returns N x 5 array: [x, y, depth, confidence, depth_map_value]
-    Assumes depth_map_data rows are [x, y, a, r, g, b] and r=g=b (greyscale).
+    Loads depth point data and corresponding per-pixel depth map data, then combines them by mapping each point to its
+    corresponding pixel value in the depth map.
+    Args:
+        file_path (str): Path to the directory containing the data files.
+        depth_points_file (str): Filename of the depth points data file.
+        depth_map_file (str): Filename of the depth map data file.
+        confidence_level (float): Minimum confidence threshold for filtering depth points.
+        width (int, optional): Width of the depth map image. Defaults to 640.
+        height (int, optional): Height of the depth map image. Defaults to 480.
+        width_crop_size (int, optional): Number of pixels to crop from the left and right edges. Defaults to 0.
+        height_crop_size (int, optional): Number of pixels to crop from the top and bottom edges. Defaults to 0.
+    Returns:
+        tuple:
+            - combined (np.ndarray): Array of shape (N, 5) containing [x, y, depth, conf, map_value] for each point.
+                If a point is out of bounds, map_value is NaN.
+            - depth_map (np.ndarray): Array of per-pixel depth map data with shape (width * height, 6).
     """
+
     # Load [x, y, depth, conf]
     depth_points = read_float_data_as_nxm(file_path, depth_points_file, confidence_level)
     if depth_points.size == 0:
@@ -331,7 +466,7 @@ def get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, co
     # Use r channel only (greyscale assumption r=g=b)
     combined[inbounds, 4] = depth_map[index, 3].astype(np.float32)
 
-    return combined
+    return combined, depth_map
 
 
 
@@ -340,6 +475,19 @@ def get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, co
 ### display & visualisation
 
 def plot_points_and_images(depth_points_bitmap, depth_map_camera_bitmap, depth_map_colour_bitmap, confidence_points_bitmap, rotation_deg):
+    """
+    Displays four bitmap images side by side after rotating them by a specified angle.
+    Parameters:
+        depth_points_bitmap (np.ndarray): Bitmap image representing depth points.
+        depth_map_camera_bitmap (np.ndarray): Bitmap image representing the depth map from the camera.
+        depth_map_colour_bitmap (np.ndarray): Bitmap image representing the coloured depth map.
+        confidence_points_bitmap (np.ndarray): Bitmap image representing confidence points.
+        rotation_deg (int): Angle in degrees to rotate each image. Must be one of {0, 90, -90, 180, 270}.
+    Raises:
+        ValueError: If rotation_deg is not one of the allowed values.
+    Displays:
+        A matplotlib figure with the four rotated images side by side, each with a corresponding title.
+    """
     # Rotate all images by the specified angle
     def rotate_img(img, rotation_deg):
         if img is None:
@@ -375,6 +523,23 @@ def plot_points_and_images(depth_points_bitmap, depth_map_camera_bitmap, depth_m
     plt.show()
 
 def batch_display_points_and_images(file_path, collated_table, confidence_level, timestamps_array=None, match_indices=None, depth_points_indices=None, depth_range=(0.0, 5.0), rotation_deg=0):
+    """
+    Displays depth points and associated images in batches, filtering and visualizing data based on provided indices and confidence levels.
+    Args:
+        file_path (str): Path to the directory containing the data files.
+        collated_table (list): Table containing rows of metadata and file references for depth points and images.
+        confidence_level (float): Minimum confidence threshold for displaying points.
+        timestamps_array (np.ndarray, optional): Array containing timestamps for frames, cameras, depth, and confidence. Defaults to None.
+        match_indices (list, optional): List of index pairs mapping rows to timestamp entries. Defaults to None.
+        depth_points_indices (list, optional): List of indices specifying which depth points to process. Defaults to None.
+        depth_range (tuple, optional): Range of depth values to filter points, as (min_depth, max_depth). Defaults to (0.0, 5.0).
+        rotation_deg (int, optional): Degree of rotation to apply to displayed images. Defaults to 0.
+    Returns:
+        None
+    Side Effects:
+        - Displays images and points using visualization functions.
+        - Prints row information and timestamp details for each processed entry.
+    """
 
     for i_row, row in enumerate(collated_table):
 
@@ -398,57 +563,120 @@ def batch_display_points_and_images(file_path, collated_table, confidence_level,
         print(f"DEL: Row {i_row}: Frame ts {timestamps_array[indices[1], 1]-timestamps_array[indices[0], 3]:.6f}, Camera ts {timestamps_array[indices[1], 2]-timestamps_array[indices[0], 3]:.6f}, Depth ts n/a, Confidence ts {timestamps_array[indices[1], 4]-timestamps_array[indices[0], 3]:.6f}")
 
 
-def plot_histograms_and_regression(combined_data_points, depth_range, regression_points = None):
+def plot_histograms_and_regression(combined_data_points, depth_range, depth_map, regression_points = None, flip_axes = False):
+    """
+    Plots histograms and a scatter plot to visualize depth data and regression results.
+    This function creates a 1x4 subplot figure:
+        1. Histogram of valid reciprocal relative depth values from the depth map.
+        2. Histogram of reciprocal relative depth values from combined data points.
+        3. Histogram of metric depth values from combined data points.
+        4. Scatter plot of metric depth vs reciprocal relative depth, optionally with a regression line.
+    Parameters
+    ----------
+    combined_data_points : np.ndarray
+        Array of data points, where columns are expected to include metric depth (col 2),
+        weights (col 3), and reciprocal relative depth (col 4).
+    depth_range : tuple
+        Tuple (min_depth, max_depth) specifying the range of metric depth values.
+    depth_map : np.ndarray
+        Array representing the depth map, where column 4 contains reciprocal relative depth values.
+    regression_points : np.ndarray, optional
+        Array of regression points to plot as a line in the scatter plot (default is None).
+    flip_axes : bool, optional
+        If True, flips the axes of the histograms and scatter plot (default is False).
+    Returns
+    -------
+    None
+        Displays the plots using matplotlib.
+    """
+    fig, axes = plt.subplots(1, 4, figsize=(24, 6))
 
-        fig, axes = plt.subplots(1, 3, figsize=(24, 6))
+    depth_min = depth_range[0]
+    depth_max = depth_range[1]
+    depth_map_min = 0.0
+    depth_map_max = 1.0
 
-        depth_min = depth_range[0]
-        depth_max = depth_range[1]
-        depth_map_min = 0.0
-        depth_map_max = 1.0
-        hist_max = 100
+    # Histogram of Depth Values
+    # Only include points with values > 0
+    valid_values = depth_map[:, 4][depth_map[:, 4] > 0]
+    hist_max = np.histogram(valid_values, bins=50)[0].max()
+    axes[0].hist(valid_values, bins=50, alpha=0.7, color='blue')
+    axes[0].set_xlim(depth_map_min, depth_map_max)
+    axes[0].set_xlabel('Reciprocal Relative Depth')
+    axes[0].set_ylim(0, hist_max)
+    axes[0].set_ylabel('Frequency')
+    axes[0].grid(True)
 
-        # Histogram of Depth Values
-        axes[0].hist(combined_data_points[:, 2], bins=50, alpha=0.7, color='blue')
-        axes[0].set_xlim(depth_min, depth_max)
-        axes[0].set_ylim(0, hist_max)
-        axes[0].set_xlabel('Depth')
-        axes[0].set_ylabel('Frequency')
-        axes[0].set_title('Histogram of Depth Values')
-        axes[0].grid(True)
+    hist_max = np.histogram(combined_data_points[:, 2], bins=50)[0].max()
+    # if not flip_axes:
+    #     axes[1].hist(combined_data_points[:, 2], bins=50, alpha=0.7, color='blue')
+    #     axes[1].set_xlim(depth_min, depth_max)
+    #     axes[1].set_xlabel('Metric Depth')
+    # else:
+    axes[1].hist(combined_data_points[:, 4], bins=50, alpha=0.7, color='blue')
+    axes[1].set_xlim(depth_map_min, depth_map_max)
+    axes[1].set_xlabel('Reciprocal Relative Depth')
+    axes[1].set_ylim(0, hist_max)
+    axes[1].set_ylabel('Frequency')
+    axes[1].grid(True)
 
-        # Histogram of Depth Map Values
-        axes[1].hist(combined_data_points[:, 4], bins=50, alpha=0.7, color='blue')
-        axes[1].set_xlim(depth_map_min, depth_map_max)
-        axes[1].set_ylim(0, hist_max)
-        axes[1].set_xlabel('Depth Map Value')
-        axes[1].set_ylabel('Frequency')
-        axes[1].set_title('Histogram of Depth Map Values')
-        axes[1].grid(True)
+    # Histogram of Depth Map Values
+    # if not flip_axes:
+    #     axes[2].hist(combined_data_points[:, 4], bins=50, alpha=0.7, color='blue')
+    #     axes[2].set_xlim(depth_map_min, depth_map_max)
+    #     axes[2].set_xlabel('Reciprocal Relative Depth')
+    # else:
+    axes[2].hist(combined_data_points[:, 2], bins=50, alpha=0.7, color='blue')
+    axes[2].set_xlim(depth_min, depth_max)
+    axes[2].set_xlabel('Metric Depth')
+    axes[2].set_ylim(0, hist_max)
+    axes[2].set_ylabel('Frequency')
+    axes[2].grid(True)
 
-        # Scatter plot: Depth vs Depth Map Value
-        # Use combined_data_points[:, 3] (confidence) as weights for point size
-        # Normalize weights to a reasonable range, e.g., [2, 50]
-        weights = combined_data_points[:, 3]
-        min_size, max_size = 2, 50
-        norm_weights = (weights - weights.min()) / (weights.ptp() + 1e-8)
-        sizes = min_size + norm_weights * (max_size - min_size)
+    # Scatter plot: Depth vs Depth Map Value
+    weights = combined_data_points[:, 3]
+    min_size, max_size = 2, 50
+    norm_weights = (weights - weights.min()) / (weights.ptp() + 1e-8)
+    sizes = min_size + norm_weights * (max_size - min_size)
 
-        if regression_points is not None:
-            axes[2].plot(regression_points[:, 0], regression_points[:, 1], linestyle='--', color='blue', alpha=0.7, linewidth=2, label='Regression')
-            axes[2].legend()
-        axes[2].scatter(combined_data_points[:, 2], combined_data_points[:, 4], alpha=0.5, s=sizes)
-        axes[2].set_xlim(0.0, depth_max)
-        axes[2].set_ylim(0.0, depth_map_max)
-        axes[2].set_xlabel('Depth')
-        axes[2].set_ylabel('Depth Map Value')
-        axes[2].set_title('Depth Map Value vs Depth')
-        axes[2].grid(True)
+    if regression_points is not None:
+        if not flip_axes:
+            axes[3].plot(regression_points[:, 0], regression_points[:, 1], linestyle='--', color='blue', alpha=0.7, linewidth=2, label='Regression')
+        else:
+            axes[3].plot(regression_points[:, 1], regression_points[:, 0], linestyle='--', color='blue', alpha=0.7, linewidth=2, label='Regression')
+        axes[3].legend()
+    if not flip_axes:
+        axes[3].scatter(combined_data_points[:, 2], combined_data_points[:, 4], alpha=0.5, s=sizes)
+        axes[3].set_xlim(0.0, depth_max)
+        axes[3].set_ylim(0.0, depth_map_max)
+        axes[3].set_xlabel('Depth')
+        axes[3].set_ylabel('Depth Map Value')
+    else:
+        axes[3].scatter(combined_data_points[:, 4], combined_data_points[:, 2], alpha=0.5, s=sizes)
+        axes[3].set_xlim(0.0, depth_map_max)
+        axes[3].set_ylim(0.0, depth_max)
+        axes[3].set_xlabel('Depth Map Value')
+        axes[3].set_ylabel('Depth')
+    axes[3].grid(True)
 
-        plt.tight_layout()
-        plt.show()
+    plt.tight_layout()
+    plt.show()
 
-def batch_display_histograms_and_regression(file_path, matched_filename_table, depth_points_indices, confidence_level, depth_range=(0.0, 5.0)):
+def batch_display_histograms_and_regression(file_path, matched_filename_table, depth_points_indices, confidence_level, depth_range=(0.0, 5.0), flip_axes=False):
+    """
+    Processes a batch of depth point and depth map files, displaying histograms and regression plots for each valid entry.
+    Iterates over the provided matched filename table, filtering entries based on availability and specified indices.
+    For each valid entry, extracts combined data points and visualizes them using histograms and regression analysis.
+    Args:
+        file_path (str): Path to the directory containing the data files.
+        matched_filename_table (list): List of rows, each containing filenames and metadata for depth points and depth maps.
+        depth_points_indices (list): List of integer indices specifying which depth points files to process.
+        confidence_level (float): Minimum confidence threshold for including data points.
+        depth_range (tuple, optional): Range of depth values to display in plots. Defaults to (0.0, 5.0).
+        flip_axes (bool, optional): If True, flips the axes in the plots. Defaults to False.
+    Returns:
+        None
+    """
 
     for _, row in enumerate(matched_filename_table):
         
@@ -469,7 +697,7 @@ def batch_display_histograms_and_regression(file_path, matched_filename_table, d
         # combined data points: x, y, dpeth, confidence, depth map value
         combined_data_points = get_depth_point_vs_map_data(file_path, depth_points_file, depth_map_file, confidence_level)
 
-        plot_histograms_and_regression(combined_data_points, depth_range)
+        plot_histograms_and_regression(combined_data_points, depth_range, flip_axes)
 
 
 ####################################################################################################################
@@ -479,9 +707,19 @@ if (__name__ == "__main__"):
 
     ##########################################################################################################
 
-    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
-    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+    ##########################################################################################################
 
+    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+
+    # DATA - A
+    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+    # DATA - B
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_30_2"
+    # DATA - C
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
+
+    ###########################################################################################################
+    
     BATCH_NUMBER = 0
     CONFIDENCE_LEVEL = 0.75
     DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, 25.0)
@@ -494,6 +732,8 @@ if (__name__ == "__main__"):
     X_CUT = 7.0
     X_WIDTH = 1.0
     WEIGHTS_SIGMOID = (X_CUT, X_WIDTH)
+
+    FLIP_AXES = False
 
     ##################################################################################################################
     TIMESTAMPS_TABLE = read_timestamp_files(FILE_PATH, BATCH_NUMBER)
@@ -509,7 +749,7 @@ if (__name__ == "__main__"):
     depth_map_file_name_replacement = None
     batch_display_points_and_images(FILE_PATH, FILENAME_TABLE, CONFIDENCE_LEVEL, TIMESTAMPS_TABLE, MATCHED_INDICES, DEPTH_POINTS_INDICES, depth_range=DEPTH_RANGE_FOR_COLOUR_MAP)
 
-    batch_display_histograms_and_regression(FILE_PATH, FILENAME_TABLE, DEPTH_POINTS_INDICES, CONFIDENCE_LEVEL, depth_range=DEPTH_RANGE_FOR_COLOUR_MAP)
+    batch_display_histograms_and_regression(FILE_PATH, FILENAME_TABLE, DEPTH_POINTS_INDICES, CONFIDENCE_LEVEL, depth_range=DEPTH_RANGE_FOR_COLOUR_MAP, flip_axes=FLIP_AXES)
 
 
 ####################################################################################################################

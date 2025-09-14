@@ -11,17 +11,20 @@ if __name__ == "__main__":
 
     ##########################################################################################################
 
-    FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
-    
-    
+    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+
+    # DATA - A
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+    # DATA - B
     # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_30_2"
+    # DATA - C
     FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
 
     ###########################################################################################################
 
 
     CONFIDENCE_LEVEL = 0.75
-    DEPTH_MAX = 25.0
+    DEPTH_MAX = 5.0
     DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, DEPTH_MAX)
 
     FRAME_INCLUSION_LIST = range(0, 100, 1)
@@ -33,7 +36,7 @@ if __name__ == "__main__":
     X_WIDTH = 1.0
     WEIGHTS_SIGMOID = (X_CUT, X_WIDTH)
 
-    INVERT_AXES = False
+    INVERT_AXES = True
     DISPLAY_PLOTS = True
 
     WIDTH = 640
@@ -77,7 +80,7 @@ if __name__ == "__main__":
                 FRAME_INCLUSION_LIST, 
                 depth_map_file_name_replacement, 
                 confidence_level=CONFIDENCE_LEVEL, 
-                depth_range_for_colour_map=DEPTH_RANGE_FOR_COLOUR_MAP, 
+                approx_depth_range=DEPTH_RANGE_FOR_COLOUR_MAP, 
                 weights_sigmoid=WEIGHTS_SIGMOID, 
                 display_plots=DISPLAY_PLOTS, 
                 match_timestamps=MATCH_TIMESTAMPS

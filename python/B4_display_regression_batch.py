@@ -14,11 +14,13 @@ if __name__ == "__main__":
     ##########################################################################################################
 
     # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
-    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_static_test"
-    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_28_1"
-    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_28_2"
-    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_28_4"
-    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+
+    # DATA - A
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+    # DATA - B
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_30_2"
+    # # DATA - C
+    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
 
     ###########################################################################################################
 
@@ -27,7 +29,7 @@ if __name__ == "__main__":
     DEPTH_MAX = 25.0
     DEPTH_RANGE_FOR_COLOUR_MAP = (0.0, DEPTH_MAX)
 
-    FRAME_INCLUSION_LIST = range(0, 100, 1)
+    FRAME_INCLUSION_LIST = range(19, 20, 20)
 
     MATCH_TIMESTAMPS = False
 
@@ -36,8 +38,8 @@ if __name__ == "__main__":
     X_WIDTH = 1.0
     WEIGHTS_SIGMOID = (X_CUT, X_WIDTH)
 
-    INVERT_AXES = False
-    DISPLAY_PLOTS = True
+    INVERT_AXES = True
+    DISPLAY_PLOTS = False
 
     WIDTH = 640
     HEIGHT = 480
@@ -45,8 +47,8 @@ if __name__ == "__main__":
     ###########################################################################################################
 
 
-    # BATCH_NUMBER_LIST = [0, 1, 2, 3]
-    BATCH_NUMBER_LIST = [0, 1]
+    BATCH_NUMBER_LIST = [0, 1, 2, 3]
+    # BATCH_NUMBER_LIST = [0, 1]
 
     for batch_number in BATCH_NUMBER_LIST:
         
@@ -74,23 +76,24 @@ if __name__ == "__main__":
             else:
                 depth_map_file_name_replacement = "MOD_"+depth_model_name
 
-            # regression = bfr.batch_fit_regression_model(
-            #     FILE_PATH, 
-            #     batch_number, 
-            #     FRAME_INCLUSION_LIST, 
-            #     depth_map_file_name_replacement, 
-            #     confidence_level=CONFIDENCE_LEVEL, 
-            #     depth_range_for_colour_map=DEPTH_RANGE_FOR_COLOUR_MAP, 
-            #     weights_sigmoid=WEIGHTS_SIGMOID, 
-            #     display_plots=DISPLAY_PLOTS, 
-            #     match_timestamps=MATCH_TIMESTAMPS
-            # )
+            regression = bfr.batch_fit_regression_model(
+                FILE_PATH, 
+                batch_number, 
+                FRAME_INCLUSION_LIST, 
+                depth_map_file_name_replacement, 
+                confidence_level=CONFIDENCE_LEVEL, 
+                approx_depth_range=DEPTH_RANGE_FOR_COLOUR_MAP, 
+                weights_sigmoid=WEIGHTS_SIGMOID, 
+                display_plots=DISPLAY_PLOTS, 
+                match_timestamps=MATCH_TIMESTAMPS,
+                flip_axes=INVERT_AXES,
+            )
 
             regression = regression_results_dict.get(depth_model_name)
 
-            bfr.plot_regression_fits(regression, INVERT_AXES, DEPTH_MAX, depth_model_name)
-            plt.tight_layout()
-            plt.show()
+            # bfr.plot_regression_fits(regression, INVERT_AXES, DEPTH_MAX, depth_model_name)
+            # plt.tight_layout()
+            # plt.show()
 
             regression_results_list.append(regression)
             invert_axes_list.append(INVERT_AXES)
@@ -98,11 +101,19 @@ if __name__ == "__main__":
 
             regression_results_dict[depth_model_name] = regression
 
-        bfr.plot_multiple_regression_fits(
-            regression_results_list,
-            invert_axes_list,
-            depth_max_list,
-            depth_model_name_list
-        )
+            if regression is not None and 'r2_score' in regression.columns:
+                mean_r2 = regression['r2_score'].mean()
+                std_r2 = regression['r2_score'].std()
+                print(f"{batch_number},{depth_model_name},{mean_r2:.4f},{std_r2:.4f}")
+            else:
+                print(f"{depth_model_name}: r2_score column not found or regression is None")
+
+        # bfr.plot_multiple_regression_fits(
+        #     regression_results_list,
+        #     invert_axes_list,
+        #     depth_max_list,
+        #     # depth_model_name_list
+        #     ["Midas v2.1 small on Phone", "Depth Anything v2 large"]
+        # )
 
         

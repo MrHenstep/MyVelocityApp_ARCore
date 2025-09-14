@@ -22,6 +22,28 @@ class DepthAnythingWrapper(torch.nn.Module):
     Values in [0,1] or [0,255]. Returns (1,1,h,w) on CPU, float32.
     """
     def __init__(self, model_id: str, device: str = "cpu"):
+        """
+        Initialize the depth estimation components.
+
+        This constructor loads a pretrained image processor and depth estimation model
+        identified by `model_id`, moves the model to the specified device, and switches
+        it to evaluation mode.
+
+        Args:
+            model_id (str): Hugging Face model identifier or local path for the pretrained
+                depth estimation model and its associated image processor.
+            device (str, optional): Target device for model execution (e.g., "cpu", "cuda",
+                "cuda:0"). Defaults to "cpu".
+
+        Attributes:
+            device (torch.device): Resolved PyTorch device used for inference.
+            processor (transformers.AutoImageProcessor): Preprocessing pipeline bound to the model.
+            model (transformers.AutoModelForDepthEstimation): Depth estimation model placed on
+                the specified device and set to eval mode.
+
+        Raises:
+            OSError: If the processor or model cannot be loaded from the provided `model_id`.
+        """
         super().__init__()
         self.device = torch.device(device)
         self.processor = AutoImageProcessor.from_pretrained(model_id)
@@ -73,6 +95,19 @@ class DepthAnythingWrapper(torch.nn.Module):
 
     
 def load_rgb_from_float6(file_path, file_name, H, W):
+    """
+    Loads RGB image data from a binary file containing float32 values in groups of six per pixel.
+    The function reads the specified file, reshapes the data into rows of six floats per pixel,
+    extracts the last three values (assumed to be RGB channels), and reshapes them into an image
+    of shape (H, W, 3). If the RGB values are in the range [0, 255], they are normalized to [0, 1].
+    Args:
+        file_path (str): Path to the directory containing the file.
+        file_name (str): Name of the binary file to read.
+        H (int): Height of the output image.
+        W (int): Width of the output image.
+    Returns:
+        np.ndarray: RGB image array of shape (H, W, 3) with float32 values in [0, 1].
+    """
 
     data = np.fromfile(file_path + "/" + file_name, dtype='<f4').reshape(-1, 6)
     
@@ -87,6 +122,18 @@ def load_rgb_from_float6(file_path, file_name, H, W):
     return rgb
 
 def midas_pred_to_grey(pred, target_hw, mode="bilinear"):
+    """
+    Converts a MiDaS depth prediction to a normalized 3-channel grayscale image.
+    Args:
+        pred (np.ndarray or torch.Tensor): The depth prediction array or tensor. 
+            Can be of shape (H, W), (C, H, W), (1, H, W), (B, C, H, W), etc.
+        target_hw (tuple or list): Target (height, width) for resizing the output image.
+        mode (str, optional): Interpolation mode for resizing. Default is "bilinear".
+    Returns:
+        np.ndarray: A 3-channel grayscale image of shape (H, W, 3), normalized to [0, 1].
+    Raises:
+        ValueError: If the input prediction shape is not supported.
+    """
     H, W = map(int, target_hw)
 
     # to torch float tensor
@@ -267,12 +314,36 @@ def paste_into_box(tile, full_hw, box, resize_if_needed=True, interp=cv2.INTER_L
     return canvas
 
 def rot90k(arr, k: int):
+    """
+    Rotate a NumPy array by 90 degrees k times anti-clockwise.
+
+    Parameters:
+        arr (np.ndarray): The input array to rotate.
+        k (int): Number of 90-degree rotations to apply (anti-clockwise). Only the remainder after dividing by 4 is used.
+
+    Returns:
+        np.ndarray: The rotated array.
+    """
     k = int(k) % 4     # anti-clockwise steps
     if k == 0:
         return arr
     return np.rot90(arr, k=k)
 
 def get_cropped_or_scaled_image(rgb, target_size, crop_not_scale):
+    """
+    Processes an input RGB image by either center-cropping it to a square and resizing,
+    or directly resizing it to the target size.
+    Args:
+        rgb (np.ndarray): The input RGB image as a NumPy array.
+        target_size (int): The desired width and height for the output image.
+        crop_not_scale (bool): If True, center-crops the image to a square before resizing.
+                               If False, directly resizes the image without cropping.
+    Returns:
+        input_image (np.ndarray): The processed image resized to (target_size, target_size).
+        crop_box (tuple): The coordinates of the crop box as (y1, y2, x1, x2).
+        height_in_image (int): The height of the image region used for resizing.
+        width_in_image (int): The width of the image region used for resizing.
+    """
     if crop_not_scale:
         cropped_image, crop_box = center_crop_square(rgb)
         input_image = cv2.resize(cropped_image, (target_size, target_size), interpolation=cv2.INTER_LINEAR)
@@ -290,6 +361,15 @@ def get_cropped_or_scaled_image(rgb, target_size, crop_not_scale):
     return input_image, crop_box, height_in_image, width_in_image
 
 def get_prepared_image_for_model(input_image):
+    """
+    Prepares an input image for a deep learning model by normalizing its pixel values and converting it to a PyTorch tensor.
+    The function normalizes the image using the ImageNet mean and standard deviation values, rearranges the image dimensions
+    from (height, width, channels) to (channels, height, width), and adds a batch dimension.
+    Args:
+        input_image (np.ndarray): Input image as a NumPy array of shape (H, W, 3) with pixel values in [0, 1].
+    Returns:
+        torch.Tensor: Normalized image tensor of shape (1, 3, H, W) suitable for model input.
+    """
 
     mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
     std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -301,6 +381,27 @@ def get_prepared_image_for_model(input_image):
     return input_image
 
 def save_rgb_to_float6(file_path, img, alpha=1.0):
+    """
+    Saves an RGB image to a binary file as a float32 array with 6 channels per pixel: (x, y, alpha, R, G, B).
+    Each pixel is represented by its x and y coordinates, an alpha value, and its RGB values.
+    The output array has shape (H*W, 6), where H and W are the height and width of the input image.
+    Parameters
+    ----------
+    file_path : str
+        Path to the output binary file.
+    img : np.ndarray
+        Input image as a NumPy array of shape (H, W, 3), with RGB channels.
+    alpha : float, optional
+        Alpha value to assign to each pixel (default is 1.0).
+    Returns
+    -------
+    np.ndarray
+        The resulting (H*W, 6) float32 array containing [x, y, alpha, R, G, B] for each pixel.
+    Raises
+    ------
+    ValueError
+        If the input image does not have shape (H, W, 3).
+    """
 
     if img.ndim != 3 or img.shape[2] != 3:
         raise ValueError(f"Expected (H,W,3), got {img.shape}")
@@ -327,6 +428,18 @@ def save_rgb_to_float6(file_path, img, alpha=1.0):
     return arr  # also return the array in case you want to use it
 
 def resize_keep_aspect_upper_bound(img, long_side=384, mult=32):
+    """
+    Resizes an image while preserving its aspect ratio, ensuring the longer side matches the specified upper bound,
+    and rounds the dimensions up to the nearest multiple of `mult`.
+
+    Parameters:
+        img (numpy.ndarray): Input image to be resized.
+        long_side (int, optional): Desired length of the longer side after resizing. Default is 384.
+        mult (int, optional): The multiple to which the new dimensions are rounded up. Default is 32.
+
+    Returns:
+        numpy.ndarray: The resized image with dimensions rounded to the nearest multiple of `mult`.
+    """
     H, W = img.shape[:2]
     scale = long_side / max(H, W)
     newW, newH = int(round(W*scale)), int(round(H*scale))
@@ -336,6 +449,22 @@ def resize_keep_aspect_upper_bound(img, long_side=384, mult=32):
     return cv2.resize(img, (newW, newH), interpolation=cv2.INTER_LINEAR)
 
 def _patch_stochastic_depth_aliases_for_timm10(model):
+    """
+    Patches the stochastic depth aliases for models using the timm v0.10 API.
+
+    This function checks if the given model's `pretrained.model` has a `blocks` attribute.
+    For each block, if the block does not have a `drop_path` attribute, it assigns:
+      - `drop_path1` to `drop_path` if available,
+      - otherwise, assigns an `nn.Identity()` layer to `drop_path`.
+
+    This ensures compatibility with code expecting a `drop_path` attribute in each block.
+
+    Args:
+        model: The model object containing a `pretrained.model` with `blocks`.
+
+    Returns:
+        None. The function modifies the model in place.
+    """
     import torch.nn as nn
     blocks = getattr(model.pretrained.model, "blocks", None)
     if not blocks: return
@@ -347,6 +476,37 @@ def _patch_stochastic_depth_aliases_for_timm10(model):
                 blk.drop_path = nn.Identity()
 
 def load_model(model_name, model_weights_dict):
+    """
+    Loads a depth estimation model and its weights based on the specified model name.
+    Parameters
+    ----------
+    model_name : str
+        The name of the model to load. Supported values include:
+        - "midas_v21_small"
+        - "midas_v21"
+        - "dpt_large"
+        - "dpt_beit_large_512"
+        - "depth_anything_v1_small"
+        - "depth_anything_v1_base"
+        - "depth_anything_v1_large"
+        - "depth_anything_v2_small"
+        - "depth_anything_v2_base"
+        - "depth_anything_v2_large"
+    model_weights_dict : dict
+        A dictionary mapping model names to their corresponding weights file paths.
+    Returns
+    -------
+    model : torch.nn.Module
+        The loaded model instance.
+    target_size : int or None
+        The target input size for the model, or None if not applicable.
+    Raises
+    ------
+    ValueError
+        If an unknown model_name is provided.
+    RuntimeError
+        If an unknown ViT hidden size is encountered for "dpt_large".
+    """
     weights_path = model_weights_dict.get(model_name)
 
     if model_name == "midas_v21_small":
@@ -408,6 +568,22 @@ def load_model(model_name, model_weights_dict):
     return model, target_size
 
 def get_model_input(image, model_name, crop_not_scale):
+    """
+    Prepares the input tensor and related metadata for various depth estimation models.
+    Parameters:
+        image (np.ndarray): The input image as a NumPy array.
+        model_name (str): The name of the model to prepare input for. Supported values include
+            "midas_v21", "midas_v21_small", "dpt_large", "dpt_beit_large_512", and any string starting with "depth_anything_".
+        crop_not_scale (bool): If True, crops the image instead of scaling (used for MiDaS models).
+    Returns:
+        tuple:
+            tensor (np.ndarray): The processed image tensor suitable for the specified model.
+            crop_box (tuple): The coordinates of the crop box (top, bottom, left, right) in the original image.
+            height_in_image (int): The height of the region in the original image used for the model input.
+            width_in_image (int): The width of the region in the original image used for the model input.
+    Raises:
+        ValueError: If an unknown model_name is provided.
+    """
     global target_size  # ensure visible if you reuse it elsewhere
 
     if model_name in ("midas_v21", "midas_v21_small"):
@@ -439,6 +615,22 @@ def get_model_input(image, model_name, crop_not_scale):
     return tensor, crop_box, height_in_image, width_in_image
 
 def to_imagenet_norm(input_image):
+    """
+    Normalizes an input image using ImageNet mean and standard deviation.
+
+    Args:
+        input_image (np.ndarray): Input image as a NumPy array of shape (H, W, C).
+            The image can be in the range [0, 255] or [0, 1].
+
+    Returns:
+        torch.Tensor: Normalized image tensor of shape (1, C, H, W), suitable for PyTorch models.
+
+    Notes:
+        - The function automatically scales the image to [0, 1] if the maximum value is greater than 1.5.
+        - The normalization uses the standard ImageNet mean ([0.485, 0.456, 0.406]) and
+          standard deviation ([0.229, 0.224, 0.225]).
+        - The output tensor is unsqueezed to add a batch dimension.
+    """
     mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
     std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
     x = input_image.astype(np.float32)
@@ -447,6 +639,22 @@ def to_imagenet_norm(input_image):
     return torch.from_numpy(x.transpose(2,0,1)).unsqueeze(0)
 
 def to_minus1_1(input_image):
+    """
+    Converts an input image to a PyTorch tensor with values normalized to the range [-1, 1].
+
+    The function performs the following steps:
+    1. Converts the input image to float32.
+    2. If the maximum value in the image is greater than 1.5, scales the image by dividing by 255.
+    3. Normalizes the image values from [0, 1] to [-1, 1] using the transformation: x = (x - 0.5) / 0.5.
+    4. Transposes the image from (H, W, C) to (C, H, W) and adds a batch dimension.
+    5. Converts the result to a PyTorch tensor.
+
+    Args:
+        input_image (np.ndarray): Input image array of shape (H, W, C), with values in [0, 255] or [0, 1].
+
+    Returns:
+        torch.Tensor: Normalized image tensor of shape (1, C, H, W) with values in [-1, 1].
+    """
     x = input_image.astype(np.float32)
     if x.max() > 1.5: x /= 255.0
     x = (x - 0.5) / 0.5
@@ -457,13 +665,17 @@ if __name__ == "__main__":
         
     ##########################################################################################################
 
-    FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+    # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
 
+    # DATA - A
     # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
-    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_static_test"
+    # DATA - B
     # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_30_2"
-    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
+    # DATA - C
+    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
 
+    ###########################################################################################################
+    
     CROP_NOT_SCALE = True
 
     # ROTATE_K = 3 # if the phone is vertical
@@ -486,6 +698,7 @@ if __name__ == "__main__":
     ###############################################################################################################
 
     BATCH_NUMBER_LIST = [0, 1, 2, 3]
+    # BATCH_NUMBER_LIST = [0]
 
     for batch_number in BATCH_NUMBER_LIST:
 
@@ -494,7 +707,7 @@ if __name__ == "__main__":
 
         for index, row in enumerate(MATCHED_FILENAME_TABLE):
 
-            # if (index != 0): continue
+            # if (index != 10): continue
 
             file_name = row[1]  # camera file
 

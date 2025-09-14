@@ -117,58 +117,77 @@ def read_trajectory_csv(path: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataF
 
     return extrinsics_df, cam_coords_df, ref_coords_df, meta
 
-def plot_trajectory_measures(trajectories, batch_mask, item, plot_label, title, y_min=None, y_max=None, shrink=1.0, measured_df=None, err_st_dev = 1.0):
+def plot_trajectory_measures(
+    trajectories, item, plot_label, title, y_min=None, y_max=None, shrink=1.0,
+    measured_df=None, err_st_dev=1.0, last_frame=None, last_frame_diff_phone=0, save_filename=None
+):
     """
     Plot trajectory measures with an optional shrink factor to scale the plot size and legend.
     If measured_df is provided, plot its non-null t_mid and |v| meas values as a series.
     For speed or dX, dY, dZ columns, plot against the average of the time in that row and the previous row.
+    If save_filename is provided, save the plot as a PNG file.
+    If item == "abs_r", return the final value minus the first value for each trajectory.
     """
     base_width, base_height = 8, 5
     plt.figure(figsize=(base_width * shrink, base_height * shrink))
-    color = '#4B6A88'  # Use the same blue-grey for all lines
-    linestyles = ['-', '--', '-.', ':']
-    # Use 4 hollow markers: 'o', 's', '^', 'D' (circle, square, triangle_up, diamond)
+    color_blue = '#0074D9'
+    color_green = '#4E944F'
+    linestyles = [':', '-', ':', '-']
     markers = ['o', 's', '^', 'D']
     skip_first = item in {"abs_v", "dX", "dY", "dZ"}
+
+    abs_r_diffs = {}
+
     for i, (model_name, traj_df) in enumerate(trajectories.items()):
         marker = markers[i % len(markers)]
-        # Use hollow markers by setting markerfacecolor='none'
-        if skip_first:
-            # Compute t_mid as the average of t and previous t
-            t_vals = traj_df["t"].values
-            t_mid = (t_vals[1:] + t_vals[:-1]) / 2
-            y_vals = traj_df[item].values[1:]
-            plt.plot(
-                t_mid,
-                y_vals,
-                label=model_name,
-                color=color,
-                linestyle=linestyles[i % len(linestyles)],
-                marker=marker,
-                markerfacecolor='none'
-            )
-        else:
-            plt.plot(
-                traj_df["t"],
-                traj_df[item],
-                label=model_name,
-                color=color,
-                linestyle=linestyles[i % len(linestyles)],
-                marker=marker,
-                markerfacecolor='none'
-            )
+        color = color_green if i in (0, 1) else color_blue
 
-    # Plot measured_df if provided
+        if item == "abs_R":
+            # Calculate and print the difference between last and first value
+            t_vals = traj_df["t"]
+            y_vals = traj_df["abs_R"]
+            if last_frame is not None:
+                t_vals = t_vals[:last_frame + 1 + (last_frame_diff_phone if i < 2 else 0)]
+                y_vals = y_vals[:last_frame + 1 + (last_frame_diff_phone if i < 2 else 0)]
+            if len(traj_df) > 1 and "abs_R" in traj_df.columns:
+                first_val = y_vals.iloc[0]
+                last_val = y_vals.iloc[-1]
+                diff = last_val - first_val
+                abs_r_diffs[model_name] = diff
+                print(f"{model_name}: Δ|R| = {diff:.4f}")
+        elif skip_first:
+            t_vals = traj_df["t"].values
+            t_vals = (t_vals[1:] + t_vals[:-1]) / 2
+            y_vals = traj_df[item].values[1:]
+            if last_frame is not None:
+                t_vals = t_vals[:last_frame + (last_frame_diff_phone if i < 2 else 0)]
+                y_vals = y_vals[:last_frame + (last_frame_diff_phone if i < 2 else 0)]
+        else:
+            t_vals = traj_df["t"]
+            y_vals = traj_df[item]
+            if last_frame is not None:
+                t_vals = t_vals[:last_frame + 1 + (last_frame_diff_phone if i < 2 else 0)]
+                y_vals = y_vals[:last_frame + 1 + (last_frame_diff_phone if i < 2 else 0)]
+
+        plt.plot(
+            t_vals,
+            y_vals,
+            label=model_name,
+            color=color,
+            linestyle=linestyles[i % len(linestyles)],
+            marker=marker,
+            markerfacecolor='none'
+        )
+
     if measured_df is not None and "t_mid" in measured_df.columns and "|v| meas" in measured_df.columns:
         mask = measured_df["t_mid"].notnull() & measured_df["|v| meas"].notnull()
         if mask.any():
-            # Check for error columns
             has_sig_v = "sig_v" in measured_df.columns
             has_sig_t = "sig_t" in measured_df.columns
             x = measured_df.loc[mask, "t_mid"]
             y = measured_df.loc[mask, "|v| meas"]
-            xerr = err_st_dev*measured_df.loc[mask, "sig_t"] if has_sig_t else None
-            yerr = err_st_dev*measured_df.loc[mask, "sig_v"] if has_sig_v else None
+            xerr = err_st_dev * measured_df.loc[mask, "sig_t"] if has_sig_t else None
+            yerr = err_st_dev * measured_df.loc[mask, "sig_v"] if has_sig_v else None
             plt.errorbar(
                 x,
                 y,
@@ -176,7 +195,7 @@ def plot_trajectory_measures(trajectories, batch_mask, item, plot_label, title, 
                 yerr=yerr,
                 fmt='o',
                 label="Measured |v|",
-                color='#A94442',  # dull red
+                color='#A94442',
                 markersize=1,
                 linestyle='None',
                 capsize=3
@@ -184,25 +203,38 @@ def plot_trajectory_measures(trajectories, batch_mask, item, plot_label, title, 
 
     plt.xlabel("t (s)")
     plt.ylabel(plot_label)
-    plt.title(f"{title}, {batch_mask}")
+    if title is not None:
+        plt.title(f"{title}")
     plt.grid(True)
     if y_min is not None or y_max is not None:
         plt.ylim(bottom=y_min, top=y_max)
     plt.tight_layout()
-    # Scale legend font size with shrink
     legend_fontsize = max(8, int(10 * shrink))
     plt.legend(fontsize=legend_fontsize)
+    if save_filename is not None:
+        plt.savefig(save_filename, format='png', dpi=150)
     plt.show()
+
+    if item == "abs_R":
+        print(abs_r_diffs)
+        return abs_r_diffs
 
 if __name__ == "__main__":
 
 
-    FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+    ##########################################################################################################
 
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
 
+    # DATA - A
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+    # DATA - B
     # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_30_2"
-    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
+    # DATA - C
+    FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
 
+    ###########################################################################################################
+    
     FILE_NAME_LIST = [
         "batch_0_trajectories_3D_Phone_midas_v21_small_Phone_openCV_LK.csv"
         ,"batch_0_trajectories_3D_Phone_midas_v21_small_CT2.csv"
@@ -211,11 +243,40 @@ if __name__ == "__main__":
     ]
 
     BATCH_NUMBER_LIST = [0, 1, 2, 3]
-    BATCH_NUMBER_LIST = [1]
+    BATCH_NUMBER_LIST = [2]
 
     old_batch_mask = "batch_0"
 
+    file_path_to_batch ={
+        "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported":
+            {0: (19, 0), 1: (19, 0), 2: (19, 0), 3: (19, 0)},
+        "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test":
+            {0: (19, 0), 1: (19, 0), 2: (19, 0), 3: (19, 0)},
+        "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_30_2":
+            {0: (19, 0), 1: (17, 0), 2: (19, 0), 3: (19, 0)},
+        "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1":
+            {0: (15, -3), 1: (16, 0), 2: (19, 0), 3: (16, 0)},
+    }
+
+    file_path_to_label = {
+        "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported":
+            "X",
+        "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test": 
+            "A",    
+        "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_30_2":
+            "B",
+        "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1":
+            "C",
+    }
+
+    plot_file_label = file_path_to_label.get(FILE_PATH, "X")
+    plot_file_path = "C:\\Users\\steph\\OneDrive\\UCL\\T3 - MSc Project\\Report\\images\\4_results"
+
+
+
     for batch_number in BATCH_NUMBER_LIST:
+
+        batch_to_last_frame = file_path_to_batch.get(FILE_PATH, {})
 
         batch_mask = f"batch_{batch_number}"
 
@@ -252,7 +313,14 @@ if __name__ == "__main__":
                 
                 coords_cam_frame_0 = combined_matrix @ cam_coords_df.loc[frame, "coord"]
                 X, Y, Z = coords_cam_frame_0[:3]
+
+                if frame == 0:
+                    X0, Y0, Z0 = X, Y, Z
+
+                # print(f"Frame {frame}: Camera coords in frame 0: x={X:.4f}, y={Y:.4f}, z={Z:.4f}; Camera coords in frame 0 at frame 0: x0={X0:.4f}, y0={Y0:.4f}, z0={Z0:.4f}")
+
                 abs_R = np.sqrt(X**2 + Y**2 + Z**2)
+                abs_R_0 = np.sqrt((X-X0)**2 + (Y-Y0)**2 + (Z-Z0)**2)
 
                 if frame > 0:
                     prev_coords = trajectory_camera0.loc[frame - 1, ["X", "Y", "Z"]].values
@@ -266,22 +334,43 @@ if __name__ == "__main__":
                 trajectory_camera0.loc[frame, ["dX", "dY", "dZ", "abs_v"]] = (dX, dY, dZ, abs_v) if frame > 0 else (0.0, 0.0, 0.0, 0.0)
                 trajectory_camera0.loc[frame, ["X", "Y", "Z"]] = coords_cam_frame_0[:3]
                 trajectory_camera0.loc[frame, "abs_R"] = abs_R
+                trajectory_camera0.loc[frame, "abs_R_0"] = abs_R_0
 
             trajectories[model_name] = trajectory_camera0     
 
             rms_abs_v = np.sqrt(np.mean(trajectory_camera0.loc[1:, "abs_v"]**2))
             print(f"RMS abs_v for {model_name}: {rms_abs_v:.4f}")
 
-        plot_trajectory_measures(trajectories, batch_mask, "X", "X (m)", "X coordinate vs time", shrink=0.7)
-        plot_trajectory_measures(trajectories, batch_mask, "Y", "Y (m)", "Y coordinate vs time", shrink=0.7)
-        plot_trajectory_measures(trajectories, batch_mask, "Z", "Z (m)", "Z coordinate vs time", shrink=0.7)
+        last_frame = batch_to_last_frame.get(batch_number, None)
 
-        plot_trajectory_measures(trajectories, batch_mask, "abs_R", "|r| (m)", "Distance from origin vs time", shrink=0.7)
+        _ = plot_trajectory_measures(trajectories, "X", "X (m)", None, shrink=0.7, last_frame=last_frame[0], last_frame_diff_phone=last_frame[1], save_filename=Path(plot_file_path) / f"{plot_file_label}_{batch_mask}_X.png")
+        _ = plot_trajectory_measures(trajectories, "Y", "Y (m)", None, shrink=0.7, last_frame=last_frame[0], last_frame_diff_phone=last_frame[1], save_filename=Path(plot_file_path) / f"{plot_file_label}_{batch_mask}_Y.png")
+        _ = plot_trajectory_measures(trajectories, "Z", "Z (m)", None, shrink=0.7, last_frame=last_frame[0], last_frame_diff_phone=last_frame[1], save_filename=Path(plot_file_path) / f"{plot_file_label}_{batch_mask}_Z.png")
+
+        _ = plot_trajectory_measures(trajectories, "abs_R", "|r| (m)", None, shrink=0.7, last_frame=last_frame[0], last_frame_diff_phone=last_frame[1], save_filename=Path(plot_file_path) / f"{plot_file_label}_{batch_mask}_abs_R.png")
+
+        _ = plot_trajectory_measures(trajectories, "abs_R_0", "|$r_{0}$| (m)", None, shrink=0.7, last_frame=last_frame[0], last_frame_diff_phone=last_frame[1], save_filename=Path(plot_file_path) / f"{plot_file_label}_{batch_mask}_abs_R_0.png")
+
+        # abs_r_drift_dict[batch_number] = abs_r_end
+
+        # print (f"Final |r| - initial |r| for each model: {abs_r_end}")
+
         if batch_number == 1 or batch_number == 3:
             y_min = 0.0
             y_max = 1.0
         else:
             y_min = None
             y_max = None
-        plot_trajectory_measures(trajectories, batch_mask, "abs_v", "|v| (m/s)", "Speed vs time", shrink=0.7, measured_df=measured_df, err_st_dev=2.0, y_max=y_max, y_min=y_min)
+
+        _ = plot_trajectory_measures(trajectories, "abs_v", "|v| (m/s)", None, shrink=0.7, measured_df=measured_df, err_st_dev=2.0, y_max=y_max, y_min=y_min, last_frame=last_frame[0], last_frame_diff_phone=last_frame[1], save_filename=Path(plot_file_path) / f"{plot_file_label}_{batch_mask}_abs_v.png")
+
+        # Combine all trajectories into a single DataFrame with a model_name column
+        combined_df = pd.concat(
+            [df for model_name, df in trajectories.items()],
+            keys=trajectories.keys(),
+            names=["model_name", "frame"]
+        ).reset_index()
+        out_csv_path = Path(FILE_PATH) / f"{batch_mask}_all_trajectories_camera0.csv"
+        combined_df.to_csv(out_csv_path, index=False)
+        print(f"Saved all trajectories to {out_csv_path}")
 

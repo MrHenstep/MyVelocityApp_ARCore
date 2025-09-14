@@ -5,6 +5,31 @@ import L1_lib_extraction_and_visualisation as exv
 ##################################################################################################################
 
 def read_intrinsics_bin(file_name, image_dimensions_len=2, principal_point_len=2, focal_length_len=2):
+    """
+    Reads camera intrinsic parameters from a binary file.
+    The binary file is expected to contain the following data in order:
+    - Image dimensions (e.g., width and height), as float32 values.
+    - Principal point coordinates (e.g., x and y), as float32 values.
+    - Focal length values (e.g., fx and fy), as float32 values.
+    Parameters
+    ----------
+    file_name : str
+        Path to the binary file containing the intrinsic parameters.
+    image_dimensions_len : int, optional
+        Number of elements representing image dimensions (default is 2).
+    principal_point_len : int, optional
+        Number of elements representing the principal point (default is 2).
+    focal_length_len : int, optional
+        Number of elements representing the focal length (default is 2).
+    Returns
+    -------
+    image_dimensions : np.ndarray
+        Image dimensions as a rounded int32 numpy array.
+    principal_point : np.ndarray
+        Principal point coordinates as a float32 numpy array.
+    focal_length : np.ndarray
+        Focal length values as a float32 numpy array.
+    """
 
     a = np.fromfile(file_name, dtype='<f4')  # little-endian float32
     i = 0
@@ -15,6 +40,17 @@ def read_intrinsics_bin(file_name, image_dimensions_len=2, principal_point_len=2
     return image_dimensions.round().astype(np.int32), principal_point.astype(np.float32), focal_length.astype(np.float32)
 
 def read_extrinsics_matrix(path):
+    """
+    Reads a 4x4 extrinsics matrix from a binary file written in column-major order.
+    The file is expected to contain 16 little-endian float32 values, corresponding to a 4x4 matrix
+    as written by ARCore's Pose.toMatrix() method. The matrix is reshaped to (4, 4) using column-major order.
+    Args:
+        path (str or Path): Path to the binary file containing the matrix.
+    Returns:
+        numpy.ndarray: A (4, 4) NumPy array representing the extrinsics matrix.
+    Raises:
+        ValueError: If the file does not contain exactly 16 float32 values.
+    """
     
     # ARCore Pose.toMatrix() writes a 4×4 matrix in column-major order.
     matrix = np.fromfile(path, dtype='<f4')  # little-endian float32
@@ -62,21 +98,6 @@ if __name__ == "__main__":
     ##################################################################################################################
 
 
-    # for idx, row in enumerate(MATCHED_FILENAME_TABLE):
-
-    #     FILE_NAME = row[7]
-    #     image_dimensions, principal_point, focal_length = read_intrinsics_bin(FILE_PATH + "\\" +FILE_NAME)
-    #     print(FILE_NAME + f" - Dim: {image_dimensions}, PP: {principal_point}, FL: {focal_length}")
-
-    #     FILE_NAME = row[8]
-    #     image_dimensions, principal_point, focal_length = read_intrinsics_bin(FILE_PATH + "\\" +FILE_NAME)
-    #     print(FILE_NAME + f" - Dim: {image_dimensions}, PP: {principal_point}, FL: {focal_length}")
-
-    #     FILE_NAME = row[6]
-    #     extrinsic_matrix = read_extrinsics_matrix(FILE_PATH + "\\" + FILE_NAME)
-    #     print(f"Extrinsic Matrix: {extrinsic_matrix}")
-
-    #     print("\n")
 
     file_name = MATCHED_FILENAME_TABLE[0][0]
 

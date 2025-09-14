@@ -152,82 +152,103 @@ import org.opencv.imgproc.Imgproc;
 public class VelociraptorActivity extends AppCompatActivity implements GLSurfaceView.Renderer {
 
 // <editor-fold desc="Member Variables">
+
+  // === LOGGING AND IDENTIFICATION ===
   private static final String TAG = VelociraptorActivity.class.getSimpleName();
 
-  // Views
-  private GLSurfaceView glSurfaceView;  // needs to be resumed/paused etc. because it live on GL rendering thread
-  private ImageView previewView; // doesn't need resumed/paused etc. because it is passive
+  // === UI COMPONENTS ===
+  // OpenGL surface for camera rendering - requires proper lifecycle management
+  private GLSurfaceView glSurfaceView;
+  // ImageView for displaying processed preview with overlays - passive component
+  private ImageView previewView;
 
-  // Renderers
-  // *** The backgroundRenderer neatly binds the camera feed to a texture etc.
-  // *** Probably we could extract this but as it works, we just turn off the drawing for now
+  // === RENDERING COMPONENTS ===
+  // ARCore camera texture renderer - handles camera feed binding to OpenGL texture
   private final TextureRenderer backgroundRenderer = new TextureRenderer();
 
-  // ARCore session
+  // === ARCore SESSION MANAGEMENT ===
   private Session session;
-  private boolean installRequested; // came from Codelab example
+  // Flag to track if ARCore installation was requested (prevents multiple prompts)
+  private boolean installRequested;
 
-  // snackbar to say waiting for depth data
+  // === USER INTERFACE HELPERS ===
+  // Displays status messages and errors to user
   private final SnackbarHelper messageSnackbarHelper = new SnackbarHelper();
-
-  // what it says on the tin?
+  // Manages device rotation and display orientation changes
   private DisplayRotationHelper displayRotationHelper;
 
-  // The Midas-2.0 nana model for relative depth
+  // === DEPTH ESTIMATION MODEL ===
+  // TensorFlow Lite interpreter for MiDaS depth estimation model
   private Interpreter tflite_interpreter;
+  // Path to the MiDaS model file in assets
   private static final String MODEL_PATH = "Midas-V2.tflite";
 
-  //  private long lastProcessedTimestampNanos = 0;
+  // === FRAME COLLECTION CONTROL ===
+  // Counter for frames collected in current batch
   private int numFramesCollected = 0;
+  // Total frames processed (including throttled frames)
   private int numFramesTaken = 0;
 
-  // Constants determining collection
+  // === COLLECTION PARAMETERS ===
+  // Process every Nth frame to reduce computational load
   private static final int FRAME_THROTTLE_INTERVAL = 6;
+  // Maximum frames per batch before processing
   private static final int MAX_COLLECTED_FRAMES = 20;
-
-  // options for putting 4:3 camera image bitmap into Midas 256x256
+  // Whether to crop camera image to square vs. compress (affects model input)
   private static final boolean CROP_NOT_COMPRESS = true;
 
+  // === USER INTERACTION ===
+  // Button to trigger frame collection batches
   private Button continueButton;
-
+  // Base timestamp for relative timing calculations
   private long baseTimestamp;
 
+  // === PREVIEW AND VISUALIZATION ===
+  // Last rendered preview bitmap (cached for performance)
   private volatile Bitmap lastPreviewBitmap = null;
-
+  // Previous grayscale frame for optical flow tracking
   private Mat prevGrey = null;
 
-  // For point-tracking
+  // === POINT TRACKING ===
+  // Thread-safe reference to currently tracked point coordinates
   private final AtomicReference<PointF> trackingPointRef =
         new AtomicReference<>(new PointF(0.0f, 0.0f));
 
-
-
-//  private boolean showLiveDepthPoints = true; // draw depth points even when not collecting
-
+  // === THREADING AND SYNCHRONIZATION ===
+  // Prevents multiple preview rendering operations from running simultaneously
   private final AtomicBoolean previewBusy = new AtomicBoolean(false);
-
-
-  // Cached collection of frames
+  // Thread-safe container for collected frame data
   private final List<CollectedSample> collectedFramesContainer = Collections.synchronizedList(new ArrayList<>());
-
+  // Flag indicating if currently collecting frames
   private volatile boolean collectingFrames = false;
-
+  // Background thread for frame processing (depth estimation, tracking, file I/O)
   private final ExecutorService analysisExecutor = Executors.newSingleThreadExecutor();
+  // Background thread for preview rendering
   private final ExecutorService previewExecutor = Executors.newSingleThreadExecutor();
-
+  // Flag indicating if currently processing collected frames
   private final AtomicBoolean processingFrames = new AtomicBoolean(false);
+  // Counter for batch numbering (increments with each collection)
+  private int batchCounter = 0;
 
-  private int batchCounter = 0;  // starts at 0
-
-  // In your Activity
+  // === DEVICE ORIENTATION SENSING ===
+  // Sensor manager for accelerometer access
   private SensorManager sensorManager;
+  // Accelerometer sensor for gravity-based orientation detection
   private Sensor accel;
+  // Low-pass filtered accelerometer values [x, y, z]
   private final float[] aVals = new float[3];
-  private volatile int gravityRotationDeg = 0;  // 0, 90, 180, 270
+  // Current gravity-based rotation in degrees (0, 90, 180, 270)
+  private volatile int gravityRotationDeg = 0;
 
+  /**
+   * Accelerometer-based gravity detection for device orientation.
+   * Uses low-pass filtering to reduce noise and determines primary orientation
+   * based on which axis has the strongest gravity component.
+   */
   private final SensorEventListener gravityListener = new SensorEventListener() {
-    @Override public void onSensorChanged(SensorEvent e) {
-      // Low-pass for stability (optional but nice)
+    @Override 
+    public void onSensorChanged(SensorEvent e) {
+      // Apply low-pass filter for stability (alpha = 0.8 means 80% previous, 20% new)
       final float alpha = 0.8f;
       aVals[0] = alpha * aVals[0] + (1 - alpha) * e.values[0]; // ax (right +)
       aVals[1] = alpha * aVals[1] + (1 - alpha) * e.values[1]; // ay (up +)
@@ -235,24 +256,25 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 
       float ax = aVals[0], ay = aVals[1];
 
-      // Decide dominant axis in the screen plane
+      // Determine dominant gravity axis in screen plane
       if (Math.abs(ax) > Math.abs(ay)) {
-        // Landscape
-        gravityRotationDeg = (ax > 0) ? 270 : 90;   // ax>0: right side down → rotate 270 (i.e., -90)
+        // Landscape orientation - gravity primarily on X axis
+        gravityRotationDeg = (ax > 0) ? 270 : 90;   // ax>0: right side down → rotate 270°
       } else {
-        // Portrait
+        // Portrait orientation - gravity primarily on Y axis  
         gravityRotationDeg = (ay > 0) ? 180 : 0;    // ay>0: upside-down; ay<0: upright
       }
     }
-    @Override public void onAccuracyChanged(Sensor s, int acc) {}
+    
+    @Override 
+    public void onAccuracyChanged(Sensor s, int acc) {
+      // No action needed for accuracy changes
+    }
   };
 
 
-  // Member variable to hold last tapped view coords
-//  private PointF tappedPointViewCoords = null;
-
-
-  // Member variables
+  // === COORDINATE MAPPING ===
+  // Dimensions of last processed bitmap (for touch coordinate mapping)
   private volatile int latestBitmapWidth = 0;
   private volatile int latestBitmapHeight = 0;
 
@@ -821,10 +843,10 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     paint.setColor(Color.RED);
     paint.setAntiAlias(true);
 
-    // Cross size relative to image
-    float s = Math.min(w, h);
-    float halfLen = Math.max(6f, 0.02f * s);
-    float stroke = Math.max(2f, 0.003f * s);
+    // Cross size relative to image - scales with image size but has minimums
+    float s = Math.min(w, h);                    // Use smaller dimension for scaling
+    float halfLen = Math.max(6f, 0.02f * s);     // Half-length: min 6px, or 2% of image
+    float stroke = Math.max(2f, 0.003f * s);     // Stroke width: min 2px, or 0.3% of image
     paint.setStrokeWidth(stroke);
 
     // Draw cross
@@ -862,11 +884,11 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     paint.setStyle(Paint.Style.FILL);
     paint.setAntiAlias(true);
 
-    // Define depth range (in meters) for color mapping
-    float minDepth = 0.0f;
-    float maxDepth = 5.0f;
+    // Define depth range (in meters) for color mapping - typical indoor range
+    float minDepth = 0.0f;  // Minimum depth (closest objects)
+    float maxDepth = 5.0f;  // Maximum depth (furthest objects)
 
-    float dotRadius = 2.0f;
+    float dotRadius = 2.0f;  // Radius of depth point visualization dots
 
     int pointCount = points.length / 4;
 
@@ -958,6 +980,20 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 // </editor-fold>
 
 // <editor-fold desc="Main processCollectedFrameData method">
+  /**
+   * Processes a single collected frame through the complete pipeline:
+   * 1. Extracts ARCore depth and confidence data
+   * 2. Runs MiDaS depth estimation model on camera image
+   * 3. Performs optical flow point tracking
+   * 4. Saves all data to binary files for offline analysis
+   * 
+   * @param frameData The ARCore frame data containing camera, depth, and pose info
+   * @param frameNumber Index of this frame within the current batch
+   * @param batchNumber Current batch identifier
+   * @param prevState Previous tracking state (for optical flow continuity)
+   * @param estimatedPoint User-selected point to track
+   * @return Updated tracking state for next frame
+   */
   @SuppressLint("DefaultLocale")
   private PointTrackingState processCollectedFrameData(FrameData frameData, int frameNumber, int batchNumber, PointTrackingState prevState, PointF estimatedPoint) {
 
@@ -1123,6 +1159,16 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     return Math.max(0f, Math.min(1f, val));
   }
 
+  /**
+   * Maps touch coordinates from ImageView space to bitmap pixel coordinates.
+   * Handles image scaling, rotation, and cropping transformations applied by ImageView.
+   * 
+   * @param event Touch event containing screen coordinates
+   * @param imageView The ImageView displaying the bitmap
+   * @param bitmapWidth Actual bitmap width in pixels
+   * @param bitmapHeight Actual bitmap height in pixels
+   * @return PointF in bitmap coordinate space, clamped to bitmap bounds
+   */
   private PointF mapTouchEventToBitmapPoint(MotionEvent event, ImageView imageView,
                                             int bitmapWidth, int bitmapHeight) {
 
@@ -1160,10 +1206,15 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     return new PointF(bitmapX, bitmapY);
   }
 
-  // Put near other inner classes / members
+  /**
+   * Container for a single collected frame and its associated tracking point.
+   * Used to pass data between collection and processing threads.
+   */
   private static final class CollectedSample {
+    /** ARCore frame data containing camera, depth, and pose information */
     final FrameData frame;
-    final PointF tap; // in rotated-bitmap pixel coords (same space as your preview)
+    /** User-selected tracking point in bitmap coordinates */
+    final PointF tap;
 
     CollectedSample(FrameData frame, PointF tap) {
       this.frame = frame;
@@ -1171,8 +1222,14 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     }
   }
 
+  /**
+   * Maintains state for optical flow point tracking across frames.
+   * Stores previous grayscale image and tracked point for continuity.
+   */
   private static final class PointTrackingState {
+    /** Previously tracked point coordinates */
     final PointF prevPoint;
+    /** Previous grayscale frame for optical flow calculation */
     final Mat prevGrey;
 
     PointTrackingState(PointF point, Mat grey) {
@@ -1185,6 +1242,14 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 
 // <editor-fold desc="Helper Methods - orientation">
 
+  /**
+   * Calculates the rotation needed to align camera image with display orientation.
+   * Accounts for device sensor orientation and current display rotation.
+   * 
+   * @param context Application context for camera service access
+   * @param displayRotation Current display rotation (Surface.ROTATION_*)
+   * @return Rotation in degrees to align camera image with display
+   */
   private int getCameraImageRotationDegrees(Context context, int displayRotation) {
     CameraManager cameraManager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
 
@@ -1241,6 +1306,17 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
   }
 
 
+  /**
+   * Rotates a point around the center of an image by the specified angle.
+   * Handles 90-degree increments for efficient rotation operations.
+   * 
+   * @param p Point to rotate
+   * @param angleClockwise Rotation angle in degrees (clockwise, must be multiple of 90)
+   * @param originalWidth Width of the original image
+   * @param originalHeight Height of the original image
+   * @return Rotated point coordinates
+   * @throws IllegalArgumentException if angle is not a multiple of 90 degrees
+   */
   public static PointF rotatePointF(PointF p, int angleClockwise, int originalWidth, int originalHeight) {
     int a = ((angleClockwise % 360) + 360) % 360;
     switch (a) {
@@ -1261,6 +1337,13 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 // </editor-fold>
 
 // <editor-fold desc="Helper methods - for Midas">
+  /**
+   * Loads the TensorFlow Lite model from assets into a memory-mapped buffer.
+   * 
+   * @param activity Activity context for asset access
+   * @return Memory-mapped buffer containing the model
+   * @throws IOException if model file cannot be read
+   */
   private MappedByteBuffer loadModelFile(AppCompatActivity activity) throws IOException {
     AssetFileDescriptor fileDescriptor = activity.getAssets().openFd(MODEL_PATH);
     FileInputStream inputStream = new FileInputStream(fileDescriptor.getFileDescriptor());
@@ -1301,6 +1384,13 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 
 // <editor-fold desc="Helper methods - output">
 
+  /**
+   * Saves float array to binary file in little-endian format.
+   * Files are saved to external storage in 'exported' directory.
+   * 
+   * @param array Float array to save (null arrays are ignored)
+   * @param filename Output filename (will be created in exported/ directory)
+   */
   private void saveFloatArrayToBinary(float[] array, String filename) {
 
     if (array == null) return;
@@ -1322,6 +1412,13 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
       Log.e("ExportFloat", "Failed to write binary float array", e);
     }
   }
+  /**
+   * Converts a bitmap to a float array with pixel coordinates and RGBA values.
+   * Each pixel is represented as 6 floats: [x, y, alpha, red, green, blue].
+   * 
+   * @param bitmap Source bitmap to convert
+   * @return Float array with shape [width * height * 6]
+   */
   private static float[] convertBitmapToFloatPointsArray(Bitmap bitmap) {
     int width = bitmap.getWidth();
     int height = bitmap.getHeight();
@@ -1395,6 +1492,13 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
 
 // <editor-fold desc="Helper methods - bitmaps">
 
+  /**
+   * Crops the largest square from the center of the source bitmap.
+   * 
+   * @param src Source bitmap to crop
+   * @return Square bitmap cropped from center
+   * @throws IllegalArgumentException if src is null
+   */
   public static Bitmap cropCenterSquare(Bitmap src) {
     if (src == null) throw new IllegalArgumentException("src == null");
     int w = src.getWidth();
@@ -1406,6 +1510,16 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     return Bitmap.createBitmap(src, left, top, size, size);
   }
 
+  /**
+   * Pastes a square bitmap into the center of a black canvas.
+   * Used to restore square model outputs to original image dimensions.
+   * 
+   * @param square Square bitmap to paste (must be 256x256)
+   * @param width Target canvas width
+   * @param height Target canvas height
+   * @return New bitmap with square pasted in center on black background
+   * @throws IllegalArgumentException if square is null or canvas is too small
+   */
   public static Bitmap pasteSquareIntoBlackFrame(Bitmap square, int width, int height) {
     if (square == null) throw new IllegalArgumentException("square == null");
 //    final int outW = 480, outH = 640;
@@ -1425,7 +1539,15 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     return out;
   }
 
-  // Bilinear resize for NHWC [1,H,W,1] with align_corners = false
+  /**
+   * Performs bilinear interpolation resize with PyTorch-compatible grid sampling.
+   * Uses align_corners=false semantics where pixel centers are at (i+0.5, j+0.5).
+   * 
+   * @param src Source tensor [1, H, W, 1]
+   * @param newW Target width
+   * @param newH Target height
+   * @return Resized tensor [1, newH, newW, 1]
+   */
   private static float[][][][] bilinearResizeAlignCornersFalse(float[][][][] src, int newW, int newH) {
     final int srcH = src[0].length;
     final int srcW = src[0][0].length;
@@ -1460,7 +1582,15 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     return dst;
   }
 
-  // Resize RGB float tensor [H,W,3] -> [256,256,3] with align_corners = false (PyTorch grid)
+  /**
+   * Resizes RGB float tensor with PyTorch-compatible grid sampling.
+   * Converts [H,W,3] -> [newH,newW,3] using align_corners=false semantics.
+   * 
+   * @param src Source RGB tensor [H, W, 3]
+   * @param newW Target width
+   * @param newH Target height
+   * @return Resized RGB tensor [newH, newW, 3]
+   */
   private static float[][][] resizeRgbAlignCornersFalse(float[][][] src, int newW, int newH) {
     int srcH = src.length, srcW = src[0].length;
     float[][][] dst = new float[newH][newW][3];
@@ -1489,10 +1619,18 @@ public class VelociraptorActivity extends AppCompatActivity implements GLSurface
     return dst;
   }
 
-  // Pack RGB floats (NHWC, [0,1]) to TFLite input with ImageNet mean/std
+  /**
+   * Converts RGB float array to TensorFlow Lite input buffer with ImageNet normalization.
+   * Applies ImageNet mean/std normalization and packs as NHWC format.
+   * 
+   * @param rgb RGB float array [H, W, 3] with values in [0,1]
+   * @return ByteBuffer ready for TensorFlow Lite inference
+   */
   private static ByteBuffer rgbFloatToInputBuffer(float[][][] rgb) {
-    final float meanR=0.485f, meanG=0.456f, meanB=0.406f;
-    final float stdR =0.229f, stdG =0.224f, stdB =0.225f;
+    // ImageNet normalization constants used by MiDaS model
+    final float meanR=0.485f, meanG=0.456f, meanB=0.406f;  // RGB channel means
+    final float stdR =0.229f, stdG =0.224f, stdB =0.225f;   // RGB channel standard deviations
+    // Allocate buffer for 1 batch, 256x256 image, 3 channels, 4 bytes per float
     ByteBuffer buf = ByteBuffer.allocateDirect(1 * 256 * 256 * 3 * 4).order(ByteOrder.nativeOrder());
     for (int y=0; y<256; y++) {
       for (int x=0; x<256; x++) {

@@ -2,12 +2,21 @@
 import L1_lib_extraction_and_visualisation as exv
 import numpy as np
 
-FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+##########################################################################################################
 
+# FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+
+# DATA - A
+# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+# DATA - B
+# FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_30_2"
+# DATA - C
 FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
 
+###########################################################################################################
 
 BATCH_NUMBER_LIST = [0, 1, 2, 3]
+# BATCH_NUMBER_LIST = [0, 1]
 
 
 for batch_number in BATCH_NUMBER_LIST:

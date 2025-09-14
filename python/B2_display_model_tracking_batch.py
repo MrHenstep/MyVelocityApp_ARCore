@@ -48,7 +48,7 @@ def make_queries(x0, y0, t0, device="cpu"):
     # shape 1×N×3 with rows [t, x, y]; here N=1
     return torch.tensor([[[float(t0), float(x0), float(y0)]]], dtype=torch.float32, device=device)
 
-def render_tracks(frames_np, traj_xy, vis=None, radius=3, vis_thresh=None):
+def render_tracks(frames_np, traj_xy, traj2_xy=None, vis=None, radius=3, vis_thresh=None):
     """
     frames_np is RGB and stays RGB for the caller.
     We convert to BGR only while calling OpenCV drawing, then back to RGB.
@@ -63,11 +63,18 @@ def render_tracks(frames_np, traj_xy, vis=None, radius=3, vis_thresh=None):
     if np.nanmax(traj) <= 2.0:
         traj[:, 0] *= W
         traj[:, 1] *= H
+    if traj2_xy is not None:
+        traj2 = traj2_xy.copy()
+        if np.nanmax(traj2) <= 2.0:
+            traj2[:, 0] *= W
+            traj2[:, 1] *= H
 
     out = []
     for t in range(T):
         img_rgb = frames_np[t].copy()  # RGB
         x, y = traj[t]
+        if traj2_xy is not None:
+            x2, y2 = traj2[t]
 
         if not (np.isfinite(x) and np.isfinite(y)):
             out.append(img_rgb); continue
@@ -76,29 +83,42 @@ def render_tracks(frames_np, traj_xy, vis=None, radius=3, vis_thresh=None):
             out.append(img_rgb); continue
 
         xi, yi = int(round(x)), int(round(y))
+        if traj2_xy is not None:
+            x2, y2 = int(round(x2)), int(round(y2))
+
         if 0 <= xi < W and 0 <= yi < H:
             # Convert to BGR for OpenCV drawing
             img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
             # BGR colors for OpenCV
-            color_bgr = (0, 255, 0) if (vis is not None and vis[t] >= 0.5) else (0, 0, 255)
+            color_bgr = (0, 255, 0)
             cv2.circle(img_bgr, (xi, yi), radius, color_bgr, -1)
+            if traj2_xy is not None:
+                cv2.circle(img_bgr, (x2, y2), radius*3, (255, 255, 255), 2)
             # Back to RGB for the rest of your pipeline
             img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
         out.append(img_rgb)
     return np.stack(out, 0)  # RGB
 
-def plot_frames_and_point(rotated):
+def plot_frames_and_point(rotated, frame_indices=None):
     num_frames = len(rotated)
-    cols = 5
-    rows = int(np.ceil(num_frames / cols))
+    num_frames_to_draw = len(frame_indices) if frame_indices is not None else num_frames
+
+    cols = 4
+    rows = int(np.ceil(num_frames_to_draw / cols))
 
     plt.figure(figsize=(16, rows * 4))
+
+    frame_counter = 0
     for i in range(num_frames):
-        plt.subplot(rows, cols, i + 1)
+
+        if frame_indices is not None and i not in frame_indices:
+            continue
+        plt.subplot(rows, cols, frame_counter + 1)
         plt.imshow(rotated[i])          # already RGB; do NOT cvtColor here
         plt.axis("off")
         plt.title(f"Frame {i}")
+        frame_counter += 1
     plt.tight_layout()
     plt.show()
 
@@ -147,13 +167,25 @@ if __name__ == "__main__":
 
     IMAGE_HEIGHT, IMAGE_WIDTH = 480, 640  
 
+    ##########################################################################################################
+
     # FILE_PATH = "c:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported"
+
+    # DATA - lot robot
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_28_2"
     
+
+    # DATA - A
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_27_drive_full_pipeline_test"
+    # DATA - B
+    # FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_30_2"
+    # DATA - C
     FILE_PATH = "C:\\Users\\steph\\Documents\\Projects\\AndroidStudioProjects\\Velociraptor-app\\exported\\2025_08_31_1"
 
+    ###########################################################################################################
 
-    # BATCH_NUMBER_LIST = [0, 1, 2, 3]
-    BATCH_NUMBER_LIST = [0]
+    BATCH_NUMBER_LIST = [0, 1, 2, 3]
+    # BATCH_NUMBER_LIST = [0, 1]
     
     for batch_number in BATCH_NUMBER_LIST:
 
@@ -168,19 +200,27 @@ if __name__ == "__main__":
         MATCHED_FILENAME_TABLE = exv.get_matched_filenames(MATCHED_INDICES, FILE_PATH, batch_number)
 
         camera_filenames_list = [row[1] for row in MATCHED_FILENAME_TABLE]
+        tracked_point_filenames_list = [row[5] for row in MATCHED_FILENAME_TABLE]
 
-        # Load frames
+        tracked_point_coords_list = []
+        for tracked_point_file in tracked_point_filenames_list:
+            tracked_coords = exv.read_float_data_as_nxm(FILE_PATH, tracked_point_file)[0,:2]
+            tracked_point_coords_list.append(tracked_coords)
+        
+        traj2_xy_np = np.stack(tracked_point_coords_list, axis=0)  # (T,2)
+
         frames = load_sequence_from_files(FILE_PATH, camera_filenames_list, H=480, W=640)     # (T,480,640,3)
-
 
         traj_xy, vis = read_trajectories(FILE_PATH, batch_number)
 
-        painted = render_tracks(frames, traj_xy, vis)
-        
+        painted = render_tracks(frames, traj_xy, traj2_xy=traj2_xy_np, vis=vis)
+
         if ROTATE_FOR_DISPLAY is not None:
             painted = np.array([cv2.rotate(img, ROTATE_FOR_DISPLAY) for img in painted])
         else:
             painted = painted  # leave as is
 
-        plot_frames_and_point(painted)
+        # frame_indices = [7, 8, 9, 10, 11, 12, 13, 14]
+        frame_indices = range(0, painted.shape[0])
+        plot_frames_and_point(painted, frame_indices=frame_indices)
 
