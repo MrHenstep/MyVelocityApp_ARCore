@@ -1,1 +1,25 @@
-include ':velocity_app', ':opencv'
+pluginManagement {
+  repositories {
+    google()
+    mavenCentral()
+    gradlePluginPortal()
+  }
+  plugins {
+    id("com.android.application") version "8.6.1"
+    // if you also use library modules: id("com.android.library") version "8.6.1"
+    // if you use Kotlin Android:     id("org.jetbrains.kotlin.android") version "2.0.20"
+  }
+}
+
+dependencyResolutionManagement {
+  repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+  repositories {
+    google()
+    mavenCentral()
+  }
+}
+
+rootProject.name = "Velociraptor-app"
+
+// IMPORTANT: include the Android app module by its folder name
+include(":velocity_app")

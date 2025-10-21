@@ -1,20 +1,26 @@
-apply plugin: 'com.android.application'
+// apply plugin: 'com.android.application'
 
-def setVersionName = { ->
-    if (project.hasProperty("androidVersionName")) {
-        println("Replacing versionName with supplied build parameter: " +
-                "$androidVersionName")
-        return androidVersionName
-    } else {
-        return "1.0"
-    }
+// def setVersionName = { ->
+//     if (project.hasProperty("androidVersionName")) {
+//         println("Replacing versionName with supplied build parameter: " +
+//                 "$androidVersionName")
+//         return androidVersionName
+//     } else {
+//         return "1.0"
+//     }
+// }
+
+plugins {
+  id "com.android.application"   // note: no version here
+  // id "org.jetbrains.kotlin.android"  // only if you use Kotlin
 }
 
 android {
+    namespace "com.google.ar.core.velociraptor.rawdepth"
     compileSdkVersion 28
 
     defaultConfig {
-        applicationId "com.google.ar.core.codelab.rawdepth"
+        applicationId "com.google.ar.core.velociraptor.rawdepth"
 
         // AR Optional apps must declare minSdkVersion >= 14.
         // AR Required apps must declare minSdkVersion >= 24.
@@ -60,10 +66,13 @@ dependencies {
 //    // You might also need the TFLite GPU delegate if you plan to use GPU acceleration
 //     implementation 'org.tensorflow:tensorflow-lite-gpu:2.9.0'
     // And potentially the TFLite Support Library for easier input/output processing
-     implementation 'org.tensorflow:tensorflow-lite-support:0.4.0'
+    implementation 'org.tensorflow:tensorflow-lite-support:0.4.0'
 
     implementation 'org.tensorflow:tensorflow-lite:2.13.0'            // Or your current version
     implementation 'org.tensorflow:tensorflow-lite-gpu:2.13.0'
 
-    implementation project(':opencv')
+    // implementation project(':opencv')
+    // Use the latest 4.x OpenCV Android artifact published to Maven Central
+    // implementation "org.opencv:opencv-android:4.9.0"
+    implementation "org.opencv:opencv:4.12.0"
 }
