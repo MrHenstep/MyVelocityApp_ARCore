@@ -25,6 +25,10 @@ The system works in two stages:
 | **Depth estimation** | MiDaS (multiple variants), Depth Anything | Compared accuracy against ARCore raw depth ground truth |
 | **Optical flow** | Lucas-Kanade, CoTracker | Compared tracking stability and accuracy |
 
+## Key Findings
+
+More sophisticated depth models (Depth Anything over MiDaS variants) produced meaningfully more accurate and stable depth estimates, which translated directly into better velocity estimates. However, the choice of optical flow tracker mattered far less — apart from cases where Lucas-Kanade lost the tracked point entirely, the more advanced trackers (CoTracker) didn't add significant accuracy or stability. This suggests that on compute-constrained mobile hardware, depth estimation quality is the binding constraint, and investing inference budget there rather than on tracking yields better results.
+
 ## Engineering Challenges
 
 - Running depth estimation models in real time on mobile hardware required careful model selection and TFLite optimisation
