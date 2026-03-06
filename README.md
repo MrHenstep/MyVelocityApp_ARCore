@@ -6,6 +6,8 @@ This project explores whether commodity mobile devices can produce usable veloci
 
 This work formed the basis of my MSc Machine Learning dissertation at UCL (2025).
 
+This project is split across two repositories: one for this Android app (this one), and one for the Python analysis pipleline (https://github.com/MrHenstep/Velociraptor-py)
+
 ## The Problem
 
 Estimating how fast a point in the real world is moving, using only a phone's RGB camera, is harder than it looks. You need to solve two sub-problems simultaneously: how far away is the point (depth), and how is it moving in the image plane (optical flow). Errors in either propagate directly into the velocity estimate, and on a mobile device you're working under tight compute and memory constraints.
