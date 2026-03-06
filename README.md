@@ -1,15 +1,37 @@
-# Velociraptor: ARCore-Based 3D Point Tracking and Depth Estimation
+# Velociraptor: Monocular Velocity Estimation on Mobile Devices
 
-A comprehensive system for real-time 3D point tracking and depth estimation using ARCore on Android devices, combined with advanced Python-based analysis tools for trajectory reconstruction and depth model evaluation.
+Estimating real-world velocity from a single phone camera — no GPS, no LiDAR, no additional sensors.
 
-## Overview
+This project explores whether commodity mobile devices can produce usable velocity estimates by combining monocular depth estimation with optical flow tracking. It pairs an Android app for real-time data collection with a Python pipeline for offline analysis, benchmarking multiple depth and flow models to understand the accuracy–latency trade-offs on constrained hardware.
 
-Velociraptor is a research project that combines mobile AR technology with computer vision to enable precise 3D point tracking and depth estimation. The system consists of two main components:
+This work formed the basis of my MSc Machine Learning dissertation at UCL (2025).
 
-1. **Android Application** (`velocity_app/`): Real-time data collection using ARCore
-2. **Python Analysis Pipeline** (`python/`): Offline processing and trajectory reconstruction
+## The Problem
 
-## Features
+Estimating how fast a point in the real world is moving, using only a phone's RGB camera, is harder than it looks. You need to solve two sub-problems simultaneously: how far away is the point (depth), and how is it moving in the image plane (optical flow). Errors in either propagate directly into the velocity estimate, and on a mobile device you're working under tight compute and memory constraints.
+
+## Approach
+
+The system works in two stages:
+
+**Data collection (Android):** An ARCore-based app tracks user-selected points across frames using optical flow, while simultaneously running monocular depth estimation via TensorFlow Lite. Each batch captures synchronised camera frames, depth maps, tracked point coordinates, camera intrinsics/extrinsics, and timestamps. ARCore's raw depth API provides ground-truth depth for evaluation.
+
+**Analysis (Python/PyTorch):** An offline pipeline reconstructs 3D trajectories from the 2D tracks and depth estimates, then computes velocity. Multiple depth models and optical flow methods are compared systematically through ablation.
+
+## Models Benchmarked
+
+| Component | Models | Notes |
+|-----------|--------|-------|
+| **Depth estimation** | MiDaS (multiple variants), Depth Anything | Compared accuracy against ARCore raw depth ground truth |
+| **Optical flow** | Lucas-Kanade, CoTracker | Compared tracking stability and accuracy |
+
+## Engineering Challenges
+
+- Running depth estimation models in real time on mobile hardware required careful model selection and TFLite optimisation
+- Synchronising depth estimates, optical flow, camera pose, and timestamps across frames at collection time
+- Converting between coordinate systems (image plane, camera frame, world frame) using ARCore's intrinsics and extrinsics
+- Handling edge cases in optical flow tracking (occlusion, fast motion, low texture regions)
+
 
 ### Android Application
 - **ARCore Integration**: Uses ARCore's raw depth API for real-time depth sensing
@@ -221,10 +243,10 @@ Check the `demos/` directory for example videos showing:
 If you use this project in your research, please cite:
 
 ```bibtex
-@software{velociraptor2024,
-  title={Velociraptor: ARCore-Based 3D Point Tracking and Depth Estimation},
-  author={[Your Name]},
-  year={2024},
-  url={https://github.com/[your-username]/Velociraptor-app}
+@software{dodds2025velociraptor,
+  title={Velociraptor: Monocular Velocity Estimation on Mobile Devices},
+  author={Stephen Dodds},
+  year={2025},
+  url={https://github.com/MrHenstep/MyVelocityApp_ARCore}
 }
 ```
